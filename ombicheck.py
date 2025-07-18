@@ -4,6 +4,7 @@ from tkinter import scrolledtext, ttk, filedialog, messagebox
 import re
 from datetime import datetime
 import os
+import webbrowser
 
 # Your TMDb Bearer Token
 TMDB_BEARER_TOKEN = "enterhere"
@@ -12,6 +13,7 @@ TMDB_BEARER_TOKEN = "enterhere"
 USE_CUSTOM_BACKGROUND = "yes"  # "yes" or "no"
 CUSTOM_BACKGROUND_URL = "https://i.imgur.com/9QY51tm.jpeg"  # URL to background image
 HTML_LANGUAGE = "nl-NL"  # Language code for TMDb API (e.g., "en-US", "es-ES", "fr-FR", "de-DE")
+OMBI_SITE_URL = ""  # Ombi site URL (e.g., "https://ombi.yourdomain.com")
 
 HEADERS = {
     "Authorization": f"Bearer {TMDB_BEARER_TOKEN}",
@@ -147,11 +149,11 @@ def sort_results():
 
 def open_settings_window():
     """Open a settings window for HTML customization."""
-    global USE_CUSTOM_BACKGROUND, CUSTOM_BACKGROUND_URL, HTML_LANGUAGE
+    global USE_CUSTOM_BACKGROUND, CUSTOM_BACKGROUND_URL, HTML_LANGUAGE, OMBI_SITE_URL, TMDB_BEARER_TOKEN, HEADERS
     
     settings_window = tk.Toplevel(window)
     settings_window.title("HTML Report Settings")
-    settings_window.geometry("500x300")
+    settings_window.geometry("580x520")  # Made wider to accommodate buttons
     settings_window.resizable(False, False)
     
     # Make window modal
@@ -160,13 +162,75 @@ def open_settings_window():
     
     # Center the window
     settings_window.update_idletasks()
-    x = (settings_window.winfo_screenwidth() // 2) - (500 // 2)
-    y = (settings_window.winfo_screenheight() // 2) - (300 // 2)
-    settings_window.geometry(f"500x300+{x}+{y}")
+    x = (settings_window.winfo_screenwidth() // 2) - (580 // 2)  # Updated for new width
+    y = (settings_window.winfo_screenheight() // 2) - (520 // 2)
+    settings_window.geometry(f"580x520+{x}+{y}")
+    
+    # Create main frame with scrollbar if needed
+    main_frame = tk.Frame(settings_window)
+    main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    # TMDb API Section
+    tmdb_frame = tk.LabelFrame(main_frame, text="TMDb API Configuration", padx=10, pady=10)
+    tmdb_frame.pack(fill="x", pady=(0, 10))
+    
+    # Configure grid weights for proper expansion
+    tmdb_frame.grid_columnconfigure(1, weight=1)
+    
+    tk.Label(tmdb_frame, text="TMDb Bearer Token:").grid(row=0, column=0, sticky="w", pady=5)
+    tmdb_token_var = tk.StringVar(value=TMDB_BEARER_TOKEN)
+    tmdb_token_entry = tk.Entry(tmdb_frame, textvariable=tmdb_token_var, width=40, show="*")
+    tmdb_token_entry.grid(row=0, column=1, sticky="ew", padx=(10, 5), pady=5)
+    
+    # Show/Hide token button
+    def toggle_token_visibility():
+        if tmdb_token_entry.cget('show') == '*':
+            tmdb_token_entry.config(show='')
+            show_token_btn.config(text="👁️‍🗨️ Hide")
+        else:
+            tmdb_token_entry.config(show='*')
+            show_token_btn.config(text="👁️ Show")
+    
+    show_token_btn = tk.Button(tmdb_frame, text="👁️ Show", command=toggle_token_visibility, 
+                              font=("Arial", 8), padx=5, pady=2)
+    show_token_btn.grid(row=0, column=2, padx=(5, 5), pady=5)
+    
+    # Get Token button - opens TMDb API page in user's default browser
+    def open_tmdb_api_page():
+        try:
+            webbrowser.open("https://www.themoviedb.org/settings/api")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open browser: {str(e)}")
+    
+    get_token_btn = tk.Button(tmdb_frame, text="🌐 Get Token", command=open_tmdb_api_page,
+                             bg="#01b4e4", fg="white", font=("Arial", 8, "bold"), 
+                             padx=8, pady=2)
+    get_token_btn.grid(row=0, column=3, padx=(5, 0), pady=5)
+    
+    tk.Label(tmdb_frame, text="(Click 'Get Token' to open TMDb API settings in your browser)", 
+             font=("Arial", 8), fg="gray").grid(row=1, column=1, columnspan=3, sticky="w", padx=(10, 0))
+    
+    # Ombi Site Section
+    ombi_frame = tk.LabelFrame(main_frame, text="Ombi Integration", padx=10, pady=10)
+    ombi_frame.pack(fill="x", pady=(0, 10))
+    
+    # Configure grid weights for proper expansion
+    ombi_frame.grid_columnconfigure(1, weight=1)
+    
+    tk.Label(ombi_frame, text="Ombi Site URL:").grid(row=0, column=0, sticky="w", pady=5)
+    ombi_url_var = tk.StringVar(value=OMBI_SITE_URL)
+    ombi_url_entry = tk.Entry(ombi_frame, textvariable=ombi_url_var, width=50)
+    ombi_url_entry.grid(row=0, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=5)
+    
+    tk.Label(ombi_frame, text="(e.g., https://ombi.yourdomain.com - leave empty to disable links)", 
+             font=("Arial", 8), fg="gray").grid(row=1, column=1, columnspan=3, sticky="w", padx=(10, 0))
     
     # Custom Background Section
-    bg_frame = tk.LabelFrame(settings_window, text="Custom Background", padx=10, pady=10)
-    bg_frame.pack(fill="x", padx=10, pady=10)
+    bg_frame = tk.LabelFrame(main_frame, text="Custom Background", padx=10, pady=10)
+    bg_frame.pack(fill="x", pady=(0, 10))
+    
+    # Configure grid weights for proper expansion
+    bg_frame.grid_columnconfigure(1, weight=1)
     
     use_bg_var = tk.StringVar(value=USE_CUSTOM_BACKGROUND)
     tk.Label(bg_frame, text="Use Custom Background:").grid(row=0, column=0, sticky="w", pady=5)
@@ -177,14 +241,17 @@ def open_settings_window():
     tk.Label(bg_frame, text="Background Image URL:").grid(row=1, column=0, sticky="w", pady=5)
     bg_url_var = tk.StringVar(value=CUSTOM_BACKGROUND_URL)
     bg_url_entry = tk.Entry(bg_frame, textvariable=bg_url_var, width=50)
-    bg_url_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=5)
+    bg_url_entry.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(10, 0), pady=5)
     
     tk.Label(bg_frame, text="(Must be a direct link to an image file)", 
-             font=("Arial", 8), fg="gray").grid(row=2, column=1, columnspan=2, sticky="w", padx=(10, 0))
+             font=("Arial", 8), fg="gray").grid(row=2, column=1, columnspan=3, sticky="w", padx=(10, 0))
     
     # Language Section
-    lang_frame = tk.LabelFrame(settings_window, text="Language Settings", padx=10, pady=10)
-    lang_frame.pack(fill="x", padx=10, pady=10)
+    lang_frame = tk.LabelFrame(main_frame, text="Language Settings", padx=10, pady=10)
+    lang_frame.pack(fill="x", pady=(0, 10))
+    
+    # Configure grid weights for proper expansion
+    lang_frame.grid_columnconfigure(1, weight=1)
     
     tk.Label(lang_frame, text="TMDb Language:").grid(row=0, column=0, sticky="w", pady=5)
     lang_var = tk.StringVar(value=HTML_LANGUAGE)
@@ -196,24 +263,48 @@ def open_settings_window():
     tk.Label(lang_frame, text="(Affects movie descriptions and some metadata)", 
              font=("Arial", 8), fg="gray").grid(row=1, column=1, sticky="w", padx=(10, 0))
     
-    # Buttons
-    button_frame = tk.Frame(settings_window)
-    button_frame.pack(fill="x", padx=10, pady=20)
+    # Buttons Frame - Fixed at bottom
+    button_frame = tk.Frame(main_frame)
+    button_frame.pack(fill="x", pady=(20, 0))
     
     def save_settings():
-        global USE_CUSTOM_BACKGROUND, CUSTOM_BACKGROUND_URL, HTML_LANGUAGE
+        global USE_CUSTOM_BACKGROUND, CUSTOM_BACKGROUND_URL, HTML_LANGUAGE, OMBI_SITE_URL, TMDB_BEARER_TOKEN, HEADERS
+        
+        # Validate TMDb token
+        new_token = tmdb_token_var.get().strip()
+        if not new_token:
+            messagebox.showerror("Error", "TMDb Bearer Token is required!")
+            return
+        
+        # Update global variables
         USE_CUSTOM_BACKGROUND = use_bg_var.get()
         CUSTOM_BACKGROUND_URL = bg_url_var.get()
         HTML_LANGUAGE = lang_var.get()
+        OMBI_SITE_URL = ombi_url_var.get().rstrip('/')  # Remove trailing slash
+        TMDB_BEARER_TOKEN = new_token
+        
+        # Update headers with new token
+        HEADERS = {
+            "Authorization": f"Bearer {TMDB_BEARER_TOKEN}",
+            "accept": "application/json"
+        }
+        
         messagebox.showinfo("Settings Saved", "Settings have been saved successfully!")
         settings_window.destroy()
     
     def cancel_settings():
         settings_window.destroy()
     
-    tk.Button(button_frame, text="Save", command=save_settings, 
-              bg="#28a745", fg="white", font=("Arial", 9, "bold")).pack(side=tk.RIGHT, padx=(5, 0))
-    tk.Button(button_frame, text="Cancel", command=cancel_settings).pack(side=tk.RIGHT)
+    # Make buttons more prominent
+    save_btn = tk.Button(button_frame, text="💾 Save Settings", command=save_settings, 
+                        bg="#28a745", fg="white", font=("Arial", 10, "bold"), 
+                        padx=20, pady=8)
+    save_btn.pack(side=tk.RIGHT, padx=(10, 0))
+    
+    cancel_btn = tk.Button(button_frame, text="❌ Cancel", command=cancel_settings,
+                          bg="#6c757d", fg="white", font=("Arial", 10, "bold"),
+                          padx=20, pady=8)
+    cancel_btn.pack(side=tk.RIGHT)
 
 def generate_html_report():
     """Generate an HTML report with movie posters and download status."""
@@ -343,10 +434,19 @@ def generate_html_content():
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
             overflow: hidden;
             transition: transform 0.3s ease, box-shadow 0.3s ease;
+            text-decoration: none;
+            color: inherit;
+            display: block;
         }}
         .movie-card:hover {{
             transform: translateY(-5px);
             box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+        }}
+        .movie-card.clickable {{
+            cursor: pointer;
+        }}
+        .movie-card.clickable:hover .movie-title {{
+            color: #007bff;
         }}
         .movie-poster {{
             width: 100%;
@@ -363,6 +463,7 @@ def generate_html_content():
             margin: 0 0 10px 0;
             color: #2c3e50;
             line-height: 1.3;
+            transition: color 0.3s ease;
         }}
         .movie-details {{
             display: flex;
@@ -405,6 +506,22 @@ def generate_html_content():
         .status-tbd {{
             background: #e2e3e5;
             color: #383d41;
+        }}
+        .ombi-link {{
+            display: inline-block;
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 0.9em;
+            font-weight: bold;
+            transition: background 0.3s ease;
+        }}
+        .ombi-link:hover {{
+            background: #0056b3;
+            color: white;
         }}
         .footer {{
             text-align: center;
@@ -463,8 +580,14 @@ def generate_html_content():
         if len(overview) > 150:
             overview = overview[:150] + "..."
         
+        # Determine if we should make the card clickable and add Ombi link
+        movie_id = movie.get('movie_id')
+        has_ombi_link = OMBI_SITE_URL and movie_id
+        card_class = "movie-card clickable" if has_ombi_link else "movie-card"
+        card_onclick = f'onclick="window.open(\'{OMBI_SITE_URL}/details/movie/{movie_id}\', \'_blank\')"' if has_ombi_link else ''
+        
         html += f"""
-            <div class="movie-card">
+            <div class="{card_class}" {card_onclick}>
                 <img src="{poster_url}" alt="{movie['title']} poster" class="movie-poster" 
                      onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjQ1MCIgdmlld0JveD0iMCAwIDMwMCA0NTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iNDUwIiBmaWxsPSIjRjhGOUZBIi8+CjxwYXRoIGQ9Ik0xNTAgMjI1QzE2NS4xNTUgMjI1IDE3Ny41IDIxMi42NTUgMTc3LjUgMTk3LjVDMTc3LjUgMTgyLjM0NSAxNjUuMTU1IDE3MCAxNTAgMTcwQzEzNC44NDUgMTcwIDEyMi41IDE4Mi4zNDUgMTIyLjUgMTk3LjVDMTIyLjUgMjEyLjY1NSAxMzQuODQ1IDIyNSAxNTAgMjI1WiIgZmlsbD0iI0RFRTJFNiIvPgo8cGF0aCBkPSJNMTg3LjUgMjU1SDE2Mi41VjI4MEgxMzcuNVYyNTVIMTEyLjVWMjMwSDE4Ny41VjI1NVoiIGZpbGw9IiNERUUyRTYiLz4KPC9zdmc+'">
                 <div class="movie-info">
@@ -530,7 +653,8 @@ def check_movies():
                 'date': '-',
                 'status': '-',
                 'poster_url': '',
-                'overview': 'Movie not found in TMDb database.'
+                'overview': 'Movie not found in TMDb database.',
+                'movie_id': None
             })
             continue
         
@@ -551,7 +675,8 @@ def check_movies():
                 'date': release_date,
                 'status': downloadable_status,
                 'poster_url': poster_url,
-                'overview': overview
+                'overview': overview,
+                'movie_id': movie_id
             })
         else:
             movie_results.append({
@@ -560,7 +685,8 @@ def check_movies():
                 'date': 'TBD',
                 'status': 'No',
                 'poster_url': poster_url,
-                'overview': overview
+                'overview': overview,
+                'movie_id': movie_id
             })
     
     display_results(movie_results)
@@ -592,7 +718,11 @@ tk.Button(controls_frame, text="Sort", command=sort_results).pack(side=tk.LEFT, 
 
 # HTML Export button
 tk.Button(controls_frame, text="Generate HTML Report", command=generate_html_report, 
-          bg="#007bff", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+          bg="#007bff", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+
+# Settings button
+tk.Button(controls_frame, text="Settings", command=open_settings_window, 
+          bg="#6c757d", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
 
 tk.Label(window, text="Results:").pack(anchor='w', padx=10)
 output_text = scrolledtext.ScrolledText(window, height=15, width=110, state=tk.DISABLED)
