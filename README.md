@@ -34,3 +34,5 @@ Soon   = Coming soon (date in future)
 TBD    = Release type known, no date  
 No     = Not yet released  
 Not Found = Not in TMDb  
+
+In the near future I want to add a bash variant for automatic changes
