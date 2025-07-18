@@ -9,18 +9,19 @@ Features
 
 Usage  
 1. Install requirements:  
-   pip install requests  
+   pip install requests
+   pip install tkinter  
 
-2. Get a TMDb v4 Bearer Token from:  
+3. Get a TMDb v4 Bearer Token from:  
    https://www.themoviedb.org/settings/api  
 
-3. Add your token in the script:  
-   TMDB_BEARER_TOKEN = "your_token_here"  
+4. Add your token in the script:  
+   TMDB_BEARER_TOKEN = "enterhere"  
 
-4. Run:  
-   python movie_checker.py  
+5. Run:  
+   python ombicheck.py 
 
-5. Paste a tab-separated movie list and click "Check Availability".  
+6. Paste a tab-separated movie list and click "Check Availability".  
 
 Example input:  
 Jurassic World Rebirth (07/01/2025)	Emma	Released  
