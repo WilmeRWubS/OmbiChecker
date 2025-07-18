@@ -8,6 +8,11 @@ import os
 # Your TMDb Bearer Token
 TMDB_BEARER_TOKEN = "enterhere"
 
+# Configuration for HTML customization
+USE_CUSTOM_BACKGROUND = "yes"  # "yes" or "no"
+CUSTOM_BACKGROUND_URL = "https://i.imgur.com/9QY51tm.jpeg"  # URL to background image
+HTML_LANGUAGE = "nl-NL"  # Language code for TMDb API (e.g., "en-US", "es-ES", "fr-FR", "de-DE")
+
 HEADERS = {
     "Authorization": f"Bearer {TMDB_BEARER_TOKEN}",
     "accept": "application/json"
@@ -28,7 +33,10 @@ movie_results = []
 
 def search_movie(title):
     url = "https://api.themoviedb.org/3/search/movie"
-    params = {"query": title}
+    params = {
+        "query": title,
+        "language": HTML_LANGUAGE
+    }
     response = requests.get(url, headers=HEADERS, params=params)
     data = response.json()
     if data.get("results"):
@@ -137,6 +145,76 @@ def sort_results():
     
     display_results(sorted_results)
 
+def open_settings_window():
+    """Open a settings window for HTML customization."""
+    global USE_CUSTOM_BACKGROUND, CUSTOM_BACKGROUND_URL, HTML_LANGUAGE
+    
+    settings_window = tk.Toplevel(window)
+    settings_window.title("HTML Report Settings")
+    settings_window.geometry("500x300")
+    settings_window.resizable(False, False)
+    
+    # Make window modal
+    settings_window.transient(window)
+    settings_window.grab_set()
+    
+    # Center the window
+    settings_window.update_idletasks()
+    x = (settings_window.winfo_screenwidth() // 2) - (500 // 2)
+    y = (settings_window.winfo_screenheight() // 2) - (300 // 2)
+    settings_window.geometry(f"500x300+{x}+{y}")
+    
+    # Custom Background Section
+    bg_frame = tk.LabelFrame(settings_window, text="Custom Background", padx=10, pady=10)
+    bg_frame.pack(fill="x", padx=10, pady=10)
+    
+    use_bg_var = tk.StringVar(value=USE_CUSTOM_BACKGROUND)
+    tk.Label(bg_frame, text="Use Custom Background:").grid(row=0, column=0, sticky="w", pady=5)
+    bg_combo = ttk.Combobox(bg_frame, textvariable=use_bg_var, values=["no", "yes"], 
+                           state="readonly", width=10)
+    bg_combo.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=5)
+    
+    tk.Label(bg_frame, text="Background Image URL:").grid(row=1, column=0, sticky="w", pady=5)
+    bg_url_var = tk.StringVar(value=CUSTOM_BACKGROUND_URL)
+    bg_url_entry = tk.Entry(bg_frame, textvariable=bg_url_var, width=50)
+    bg_url_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=5)
+    
+    tk.Label(bg_frame, text="(Must be a direct link to an image file)", 
+             font=("Arial", 8), fg="gray").grid(row=2, column=1, columnspan=2, sticky="w", padx=(10, 0))
+    
+    # Language Section
+    lang_frame = tk.LabelFrame(settings_window, text="Language Settings", padx=10, pady=10)
+    lang_frame.pack(fill="x", padx=10, pady=10)
+    
+    tk.Label(lang_frame, text="TMDb Language:").grid(row=0, column=0, sticky="w", pady=5)
+    lang_var = tk.StringVar(value=HTML_LANGUAGE)
+    lang_combo = ttk.Combobox(lang_frame, textvariable=lang_var, width=15,
+                             values=["en-US", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-BR", 
+                                   "ja-JP", "ko-KR", "zh-CN", "ru-RU", "nl-NL", "sv-SE"])
+    lang_combo.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=5)
+    
+    tk.Label(lang_frame, text="(Affects movie descriptions and some metadata)", 
+             font=("Arial", 8), fg="gray").grid(row=1, column=1, sticky="w", padx=(10, 0))
+    
+    # Buttons
+    button_frame = tk.Frame(settings_window)
+    button_frame.pack(fill="x", padx=10, pady=20)
+    
+    def save_settings():
+        global USE_CUSTOM_BACKGROUND, CUSTOM_BACKGROUND_URL, HTML_LANGUAGE
+        USE_CUSTOM_BACKGROUND = use_bg_var.get()
+        CUSTOM_BACKGROUND_URL = bg_url_var.get()
+        HTML_LANGUAGE = lang_var.get()
+        messagebox.showinfo("Settings Saved", "Settings have been saved successfully!")
+        settings_window.destroy()
+    
+    def cancel_settings():
+        settings_window.destroy()
+    
+    tk.Button(button_frame, text="Save", command=save_settings, 
+              bg="#28a745", fg="white", font=("Arial", 9, "bold")).pack(side=tk.RIGHT, padx=(5, 0))
+    tk.Button(button_frame, text="Cancel", command=cancel_settings).pack(side=tk.RIGHT)
+
 def generate_html_report():
     """Generate an HTML report with movie posters and download status."""
     if not movie_results:
@@ -167,20 +245,45 @@ def generate_html_content():
     """Generate the HTML content for the movie report."""
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
     
+    # Determine background style
+    if USE_CUSTOM_BACKGROUND.lower() == "yes" and CUSTOM_BACKGROUND_URL:
+        background_style = f"""
+            background: url('{CUSTOM_BACKGROUND_URL}') center center fixed;
+            background-size: cover;
+        """
+        # Add overlay for better readability
+        overlay_style = """
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: -1;
+        }
+        """
+    else:
+        background_style = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"
+        overlay_style = ""
+    
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Movie Download Status Report</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
     <style>
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             margin: 0;
             padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            {background_style}
             min-height: 100vh;
         }}
+        {overlay_style}
         .container {{
             max-width: 1200px;
             margin: 0 auto;
@@ -188,6 +291,8 @@ def generate_html_content():
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.3);
             overflow: hidden;
+            position: relative;
+            z-index: 1;
         }}
         .header {{
             background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
@@ -308,6 +413,13 @@ def generate_html_content():
             color: #6c757d;
             font-size: 0.9em;
         }}
+        .footer a {{
+            color: #007bff;
+            text-decoration: none;
+        }}
+        .footer a:hover {{
+            text-decoration: underline;
+        }}
     </style>
 </head>
 <body>
@@ -380,7 +492,7 @@ def generate_html_content():
         </div>
         
         <div class="footer">
-            <p>Generated by Movie Downloadability Checker | Data from The Movie Database (TMDb)</p>
+            <p>Generated by ombicheck.py | Data from The Movie Database (TMDb) | <a href="https://github.com/WilmeRWubS/OmbiChecker" target="_blank" rel="noopener noreferrer">https://github.com/WilmeRWubS/OmbiChecker</a></p>
         </div>
     </div>
 </body>
