@@ -1,17 +1,17 @@
-Movie Downloadability Checker  
+# Movie Downloadability Checker  
 Simple Python GUI to check if movies have been officially released on digital (VOD) or physical (DVD/Blu-ray) platforms using TMDb.  
 
-Bash Variant for Automation
+# Bash Variant for Automation
 A Bash version of the tool is also available, built for automation and integration with Ombi database.  
 
-Features  
+## Features  
 - Checks TMDb for each movie  
 - Detects Digital or Physical releases only  
 - Classifies as Yes, Soon, TBD, or No  
 - Sortable results (Title, Type, Date, Status)
 - Export to nice looking html file  
 
-Usage  
+## Usage  
 1. Install requirements:  
    pip install requests
    pip install tkinter  
@@ -36,6 +36,4 @@ Yes    = Proper release, available
 Soon   = Coming soon (date in future)  
 TBD    = Release type known, no date  
 No     = Not yet released  
-Not Found = Not in TMDb  
-
-In the near future I want to add a bash variant for automatic changes
+Not Found = Not in TMDb
