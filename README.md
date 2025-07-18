@@ -5,7 +5,8 @@ Features
 - Checks TMDb for each movie  
 - Detects Digital or Physical releases only  
 - Classifies as Yes, Soon, TBD, or No  
-- Sortable results (Title, Type, Date, Status)  
+- Sortable results (Title, Type, Date, Status)
+- Export to nice looking html file  
 
 Usage  
 1. Install requirements:  
