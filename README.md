@@ -28,8 +28,8 @@ A Bash version of the tool is also available, built for automation and integrati
 6. Paste a tab-separated movie list and click "Check Availability".  
 
 Example input:  
-Jurassic World Rebirth (07/01/2025)	Emma	Released  
-The Fantastic Four: First Steps (07/23/2025)	Emma	Post Production  
+Jurassic World Rebirth (07/01/2025)	Released  
+The Fantastic Four: First Steps (07/23/2025)	Post Production  
 
 Status meanings:  
 Yes    = Proper release, available  
