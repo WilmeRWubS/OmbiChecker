@@ -187,6 +187,7 @@ def search_movie_vuniper(title, driver, custom_dates=None):
         print(f"Search variations for '{title}': {search_variations}")
         
         vuniper_info = None
+        vuniper_url = None
         
         for search_term in search_variations:
             try:
@@ -248,6 +249,10 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                         best_suggestion.click()
                         time.sleep(4)  # Give time for page to load
                         
+                        # Capture the current URL after clicking
+                        vuniper_url = driver.current_url
+                        print(f"Vuniper URL found: {vuniper_url}")
+                        
                         # Try to extract release info
                         vuniper_info = extract_vuniper_release_info(driver)
                         
@@ -259,6 +264,7 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                             # Go back to search for next variation
                             driver.get("https://vuniper.com")
                             time.sleep(2)
+                            vuniper_url = None  # Reset URL if no valid info found
                 else:
                     print(f"No suggestions found for '{search_term}'")
                     
@@ -272,7 +278,7 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                     pass
                 continue
         
-                # If no digital date from Vuniper, check custom dates file
+        # If no digital date from Vuniper, check custom dates file
         if vuniper_info and not vuniper_info.get('digital_date') and custom_dates:
             # Try to match against custom dates with flexible matching
             title_lower = title.lower()
@@ -354,6 +360,10 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                     'status': status
                 }
                 print(f"Using custom date as primary source for '{title}': {matched_custom_date}")
+        
+        # Add the Vuniper URL to the result if we found valid info
+        if vuniper_info and vuniper_url:
+            vuniper_info['vuniper_url'] = vuniper_url
         
         return vuniper_info
         
@@ -729,11 +739,13 @@ def check_movies():
             theater_date = "TBD"
             digital_date = "TBD"
             status = "TBD"
+            vuniper_url = None
             
             if vuniper_info:
                 theater_date = vuniper_info.get('theater_date') or "TBD"
                 digital_date = vuniper_info.get('digital_date') or "TBD"
                 status = vuniper_info.get('status', 'TBD')
+                vuniper_url = vuniper_info.get('vuniper_url')
             
             poster_url = ''
             overview = 'No description available.'
@@ -752,7 +764,8 @@ def check_movies():
                 'status': status,
                 'poster_url': poster_url,
                 'overview': overview,
-                'movie_id': movie_id
+                'movie_id': movie_id,
+                'vuniper_url': vuniper_url
             })
             
             # Add delay between requests to be respectful
@@ -1172,6 +1185,39 @@ def generate_html_content():
                 font-size: 2em;
             }}
         }}
+                .ombi-link {{
+            display: inline-block;
+            background: #007bff;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 0.9em;
+            font-weight: bold;
+            transition: background-color 0.3s ease;
+            margin-right: 8px;
+        }}
+        .ombi-link:hover {{
+            background: #0056b3;
+            color: white;
+            text-decoration: none;
+        }}
+        .vuniper-link {{
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-size: 0.9em;
+            font-weight: bold;
+            transition: background-color 0.3s ease;
+        }}
+        .vuniper-link:hover {{
+            background: #1e7e34;
+            color: white;
+            text-decoration: none;
+        }}
     </style>
 </head>
 <body>
@@ -1216,10 +1262,16 @@ def generate_html_content():
         else:
             poster_html = '<div class="movie-poster" style="display: flex; align-items: center; justify-content: center; background: #f8f9fa; color: #6c757d; font-size: 3em;">🎬</div>'
         
-        # Handle Ombi link
-        ombi_link_html = ""
+        # Handle Ombi and Vuniper links
+        links_html = ""
         if OMBI_SITE_URL and movie.get('movie_id'):
-            ombi_link_html = f'<a href="{OMBI_SITE_URL}/details/movie/{movie["movie_id"]}" target="_blank" class="ombi-link">Ombi</a>'
+            links_html += f'<a href="{OMBI_SITE_URL}/details/movie/{movie["movie_id"]}" target="_blank" class="ombi-link">Ombi</a>'
+        
+        if movie.get('vuniper_url'):
+            vuniper_link_class = "vuniper-link"
+            if links_html:  # If there's already an Ombi link, add some spacing
+                links_html += ' '
+            links_html += f'<a href="{movie["vuniper_url"]}" target="_blank" class="{vuniper_link_class}">Vuniper</a>'
         
         # Format release dates
         theater_date = movie.get('theater_date', 'TBD') if movie.get('theater_date') != 'TBD' else 'TBD'
@@ -1238,7 +1290,7 @@ def generate_html_content():
                         </div>
                         <span class="status-badge {status_class}">{movie['status']}</span>
                     </div>
-                    {ombi_link_html}
+                    {links_html}
                 </div>
             </div>"""
     
