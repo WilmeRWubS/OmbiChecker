@@ -1045,6 +1045,19 @@ def generate_html_content():
         }}
         .stat {{
             text-align: center;
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            user-select: none;
+        }}
+        .stat:hover {{
+            background: rgba(0,0,0,0.05);
+            transform: translateY(-2px);
+        }}
+        .stat.active {{
+            background: rgba(0,123,255,0.1);
+            border: 2px solid #007bff;
         }}
         .stat-number {{
             font-size: 2em;
@@ -1056,6 +1069,14 @@ def generate_html_content():
             font-size: 0.9em;
             text-transform: uppercase;
             letter-spacing: 1px;
+        }}
+        .filter-info {{
+            text-align: center;
+            padding: 10px 20px;
+            background: #e3f2fd;
+            color: #1976d2;
+            font-weight: bold;
+            display: none;
         }}
         .movies-grid {{
             display: grid;
@@ -1076,6 +1097,9 @@ def generate_html_content():
         .movie-card:hover {{
             transform: translateY(-5px);
             box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }}
+        .movie-card.hidden {{
+            display: none;
         }}
         .movie-poster {{
             width: 100%;
@@ -1159,42 +1183,6 @@ def generate_html_content():
             font-size: 0.9em;
             font-weight: bold;
             transition: background-color 0.3s ease;
-        }}
-        .ombi-link:hover {{
-            background: #0056b3;
-            color: white;
-            text-decoration: none;
-        }}
-        .footer {{
-            text-align: center;
-            padding: 20px;
-            background: #f8f9fa;
-            color: #6c757d;
-            font-size: 0.9em;
-        }}
-        @media (max-width: 768px) {{
-            .movies-grid {{
-                grid-template-columns: 1fr;
-                padding: 15px;
-            }}
-            .stats {{
-                flex-direction: column;
-                gap: 15px;
-            }}
-            .header h1 {{
-                font-size: 2em;
-            }}
-        }}
-                .ombi-link {{
-            display: inline-block;
-            background: #007bff;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 5px;
-            text-decoration: none;
-            font-size: 0.9em;
-            font-weight: bold;
-            transition: background-color 0.3s ease;
             margin-right: 8px;
         }}
         .ombi-link:hover {{
@@ -1218,6 +1206,26 @@ def generate_html_content():
             color: white;
             text-decoration: none;
         }}
+        .footer {{
+            text-align: center;
+            padding: 20px;
+            background: #f8f9fa;
+            color: #6c757d;
+            font-size: 0.9em;
+        }}
+        @media (max-width: 768px) {{
+            .movies-grid {{
+                grid-template-columns: 1fr;
+                padding: 15px;
+            }}
+            .stats {{
+                flex-direction: column;
+                gap: 15px;
+            }}
+            .header h1 {{
+                font-size: 2em;
+            }}
+        }}
     </style>
 </head>
 <body>
@@ -1228,25 +1236,29 @@ def generate_html_content():
         </div>
         
         <div class="stats">
-            <div class="stat">
+            <div class="stat" data-filter="all" onclick="filterMovies('all')">
                 <div class="stat-number">{total_movies}</div>
                 <div class="stat-label">Total Movies</div>
             </div>
-            <div class="stat">
+            <div class="stat" data-filter="yes" onclick="filterMovies('yes')">
                 <div class="stat-number" style="color: #28a745;">{available_count}</div>
                 <div class="stat-label">Available Now</div>
             </div>
-            <div class="stat">
+            <div class="stat" data-filter="soon" onclick="filterMovies('soon')">
                 <div class="stat-number" style="color: #ffc107;">{soon_count}</div>
                 <div class="stat-label">Coming Soon</div>
             </div>
-            <div class="stat">
+            <div class="stat" data-filter="unavailable" onclick="filterMovies('unavailable')">
                 <div class="stat-number" style="color: #dc3545;">{unavailable_count}</div>
                 <div class="stat-label">Not Available</div>
             </div>
         </div>
         
-        <div class="movies-grid">"""
+        <div class="filter-info" id="filterInfo">
+            Showing all movies
+        </div>
+        
+        <div class="movies-grid" id="moviesGrid">"""
     
     # Generate movie cards
     for movie in movie_results:
@@ -1255,31 +1267,37 @@ def generate_html_content():
         if movie['status'] == 'TBD':
             status_class = "status-tbd"
         
-        # Handle poster image
-        poster_html = ""
-        if movie['poster_url']:
-            poster_html = f'<img src="{movie["poster_url"]}" alt="{movie["title"]} Poster" class="movie-poster" onerror="this.style.display=\'none\'">'
-        else:
-            poster_html = '<div class="movie-poster" style="display: flex; align-items: center; justify-content: center; background: #f8f9fa; color: #6c757d; font-size: 3em;">🎬</div>'
+        # Determine filter category
+        if movie['status'] == 'Yes':
+            filter_category = 'yes'
+        elif movie['status'] == 'Soon':
+            filter_category = 'soon'
+        else:  # 'No' or 'TBD'
+            filter_category = 'unavailable'
         
-        # Handle Ombi and Vuniper links
+        # Format dates for display
+        theater_date = movie.get('theater_date', 'TBD')
+        digital_date = movie.get('digital_date', 'TBD')
+        
+        if theater_date == 'TBD':
+            theater_date = 'TBD'
+        if digital_date == 'TBD':
+            digital_date = 'TBD'
+        
+        # Generate links HTML
         links_html = ""
         if OMBI_SITE_URL and movie.get('movie_id'):
-            links_html += f'<a href="{OMBI_SITE_URL}/details/movie/{movie["movie_id"]}" target="_blank" class="ombi-link">Ombi</a>'
-        
+            ombi_url = f"{OMBI_SITE_URL}/details/movie/{movie['movie_id']}"
+            links_html += f'<a href="{ombi_url}" class="ombi-link" target="_blank">Ombi</a>'
+
         if movie.get('vuniper_url'):
-            vuniper_link_class = "vuniper-link"
-            if links_html:  # If there's already an Ombi link, add some spacing
-                links_html += ' '
-            links_html += f'<a href="{movie["vuniper_url"]}" target="_blank" class="{vuniper_link_class}">Vuniper</a>'
+            links_html += f'<a href="{movie["vuniper_url"]}" class="vuniper-link" target="_blank">Vuniper</a>'
         
-        # Format release dates
-        theater_date = movie.get('theater_date', 'TBD') if movie.get('theater_date') != 'TBD' else 'TBD'
-        digital_date = movie.get('digital_date', 'TBD') if movie.get('digital_date') != 'TBD' else 'TBD'
-        
+        # Generate movie card HTML
         html += f"""
-            <div class="movie-card">
-                {poster_html}
+            <div class="movie-card" data-filter="{filter_category}">
+                <img src="{movie['poster_url']}" alt="{movie['title']} Poster" class="movie-poster" 
+                     onerror="this.style.display='none';">
                 <div class="movie-info">
                     <div class="movie-title">{movie['title']}</div>
                     <div class="movie-overview">{movie['overview']}</div>
@@ -1298,10 +1316,71 @@ def generate_html_content():
         </div>
         
         <div class="footer">
-            <p>Generated by Movie Downloadability Checker | Data sourced from Vuniper.com and TMDb</p>
-            <p>Report generated on {current_date}</p>
+            <p>Report generated by Movie Downloadability Checker</p>
+            <p>Data sources: TMDb API, Vuniper.com</p>
         </div>
     </div>
+    
+    <script>
+        let currentFilter = 'all';
+        
+        function filterMovies(filter) {{
+            currentFilter = filter;
+            const movieCards = document.querySelectorAll('.movie-card');
+            const filterInfo = document.getElementById('filterInfo');
+            const stats = document.querySelectorAll('.stat');
+            
+            // Remove active class from all stats
+            stats.forEach(stat => stat.classList.remove('active'));
+            
+            // Add active class to clicked stat
+            document.querySelector(`[data-filter="${{filter}}"]`).classList.add('active');
+            
+            // Show/hide movies based on filter
+            movieCards.forEach(card => {{
+                if (filter === 'all') {{
+                    card.classList.remove('hidden');
+                }} else {{
+                    const cardFilter = card.getAttribute('data-filter');
+                    if (cardFilter === filter) {{
+                        card.classList.remove('hidden');
+                    }} else {{
+                        card.classList.add('hidden');
+                    }}
+                }}
+            }});
+            
+            // Update filter info
+            const visibleCards = document.querySelectorAll('.movie-card:not(.hidden)').length;
+            let filterText = '';
+            
+            switch(filter) {{
+                case 'all':
+                    filterText = `Showing all {total_movies} movies`;
+                    filterInfo.style.display = 'none';
+                    break;
+                case 'yes':
+                    filterText = `Showing ${{visibleCards}} available movies`;
+                    filterInfo.style.display = 'block';
+                    break;
+                case 'soon':
+                    filterText = `Showing ${{visibleCards}} movies coming soon`;
+                    filterInfo.style.display = 'block';
+                    break;
+                case 'unavailable':
+                    filterText = `Showing ${{visibleCards}} unavailable movies`;
+                    filterInfo.style.display = 'block';
+                    break;
+            }}
+            
+            filterInfo.textContent = filterText;
+        }}
+        
+        // Initialize with all movies shown
+        document.addEventListener('DOMContentLoaded', function() {{
+            filterMovies('all');
+        }});
+    </script>
 </body>
 </html>"""
     
