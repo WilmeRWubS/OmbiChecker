@@ -124,67 +124,67 @@ def standardize_date(date_str):
         print(f"Error parsing date '{date_str}': {str(e)}")
         return None
 
-def search_digital_release_google(title, driver):
-    """Search Google for digital release date information."""
-    try:
-        # Construct search query
-        search_query = f"{title} 2025 digital release date"
-        google_url = f"https://www.google.com/search?q={urllib.parse.quote(search_query)}"
-        
-        driver.get(google_url)
-        time.sleep(3)
-        
-        # Look for date patterns in search results
-        page_source = driver.page_source.lower()
-        
-        # Common patterns for digital release dates
-        digital_patterns = [
-            r'digital.*?(?:august|july|september|october|november|december)\s+(\d{1,2}),?\s+2025',
-            r'(?:vod|streaming|digital).*?(\d{1,2})\s+(?:august|july|september|october|november|december)\s+2025',
-            r'(?:august|july|september|october|november|december)\s+(\d{1,2}),?\s+2025.*?(?:digital|vod|streaming)',
-        ]
-        
-        month_map = {
-            'january': '01', 'february': '02', 'march': '03', 'april': '04',
-            'may': '05', 'june': '06', 'july': '07', 'august': '08',
-            'september': '09', 'october': '10', 'november': '11', 'december': '12'
-        }
-        
-        for pattern in digital_patterns:
-            matches = re.finditer(pattern, page_source)
-            for match in matches:
-                # Extract month and day from the surrounding text
-                full_match = match.group(0)
-                for month_name, month_num in month_map.items():
-                    if month_name in full_match:
-                        day_match = re.search(r'(\d{1,2})', full_match)
-                        if day_match:
-                            day = day_match.group(1).zfill(2)
-                            return f"2025-{month_num}-{day}"
-        
-        return None
-        
-    except Exception as e:
-        print(f"Error searching Google for '{title}': {str(e)}")
-        return None
-
 def search_movie_vuniper(title, driver, custom_dates=None):
     """Search for a movie on Vuniper.com and get release information with improved search."""
     try:
         driver.get("https://vuniper.com")
         time.sleep(2)
         
-        # Try multiple search variations
-        search_variations = [
+        # Load custom digital dates first
+        if not custom_dates:
+            custom_dates = load_custom_digital_dates()
+        
+        # Create comprehensive search variations
+        search_variations = []
+        
+        # Original title variations
+        search_variations.extend([
             title,  # Original title
             title.replace(":", ""),  # Remove colons
             title.replace(":", " "),  # Replace colons with spaces
-            title.split(":")[0].strip() if ":" in title else title,  # Take part before colon
-            title.replace("The ", "").strip() if title.startswith("The ") else f"The {title}",  # Toggle "The"
-        ]
+        ])
+        
+        # Handle subtitle variations (before colon)
+        if ":" in title:
+            main_title = title.split(":")[0].strip()
+            search_variations.append(main_title)
+        
+        # Handle "The" prefix variations
+        if title.startswith("The "):
+            search_variations.append(title.replace("The ", "").strip())
+        else:
+            search_variations.append(f"The {title}")
+        
+        # Handle "Movie" suffix variations
+        if " Movie" in title:
+            search_variations.append(title.replace(" Movie", "").strip())
+            search_variations.append(title.replace(" The Movie", "").strip())
+        
+        # Add year to help with specificity
+        search_variations.extend([
+            f"{title} 2025",
+            f"{title.replace('The ', '').strip()} 2025" if title.startswith("The ") else f"The {title} 2025"
+        ])
+        
+        # Individual word search for difficult cases
+        words = title.split()
+        # Filter out common words that don't help with search
+        skip_words = {'the', 'a', 'an', 'and', 'or', 'but', 'movie', 'film'}
+        important_words = [word for word in words if word.lower() not in skip_words and len(word) > 2]
+        
+        if important_words:
+            # Try combinations of important words
+            if len(important_words) >= 2:
+                search_variations.append(f"{important_words[0]} {important_words[1]}")
+                search_variations.append(f"{important_words[0]} {important_words[1]} 2025")
+            
+            # Try just the first important word with 2025
+            search_variations.append(f"{important_words[0]} 2025")
         
         # Remove duplicates while preserving order
         search_variations = list(dict.fromkeys(search_variations))
+        
+        print(f"Search variations for '{title}': {search_variations}")
         
         vuniper_info = None
         
@@ -196,34 +196,63 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                 search_input = driver.find_element(By.ID, "search-input")
                 search_input.clear()
                 search_input.send_keys(search_term)
-                time.sleep(3)  # Give more time for suggestions to load
+                time.sleep(3)  # Give time for suggestions to load
                 
                 # Try to find suggestions
                 suggestions = driver.find_elements(By.CSS_SELECTOR, ".search-suggestion")
                 
                 if suggestions:
-                    # Look for the best match (preferably with 2025 in it)
+                    # Look for the best match
                     best_suggestion = None
+                    
+                    # Priority 1: Exact match with 2025
                     for suggestion in suggestions:
                         suggestion_text = suggestion.text.lower()
-                        if "2025" in suggestion_text:
+                        if "2025" in suggestion_text and any(word.lower() in suggestion_text for word in important_words if important_words):
                             best_suggestion = suggestion
+                            print(f"Found priority match (2025 + keywords): {suggestion.text}")
                             break
                     
-                    # If no 2025 match, take the first suggestion
+                    # Priority 2: Any match with 2025
+                    if not best_suggestion:
+                        for suggestion in suggestions:
+                            suggestion_text = suggestion.text.lower()
+                            if "2025" in suggestion_text:
+                                best_suggestion = suggestion
+                                print(f"Found 2025 match: {suggestion.text}")
+                                break
+                    
+                    # Priority 3: Match with important keywords
+                    if not best_suggestion and important_words:
+                        for suggestion in suggestions:
+                            suggestion_text = suggestion.text.lower()
+                            # Check if suggestion contains multiple important words
+                            word_matches = sum(1 for word in important_words if word.lower() in suggestion_text)
+                            if word_matches >= min(2, len(important_words)):
+                                best_suggestion = suggestion
+                                print(f"Found keyword match: {suggestion.text}")
+                                break
+                    
+                    # Priority 4: First suggestion as fallback
                     if not best_suggestion and suggestions:
                         best_suggestion = suggestions[0]
+                        print(f"Using first suggestion as fallback: {best_suggestion.text}")
                     
                     if best_suggestion:
-                        print(f"Found suggestion: {best_suggestion.text}")
+                        # Check if this is just a "no results" message
+                        suggestion_text = best_suggestion.text.lower()
+                        if any(phrase in suggestion_text for phrase in ['no results', 'searched movies', 'view results']):
+                            print(f"Skipping 'no results' suggestion: {best_suggestion.text}")
+                            continue
+                        
                         best_suggestion.click()
-                        time.sleep(4)  # Give more time for page to load
+                        time.sleep(4)  # Give time for page to load
                         
                         # Try to extract release info
                         vuniper_info = extract_vuniper_release_info(driver)
                         
                         if vuniper_info and (vuniper_info.get('theater_date') or vuniper_info.get('digital_date')):
-                            print(f"Successfully found release info for '{search_term}'")
+                            print(f"Successfully found release info for '{search_term}': {vuniper_info}")
                             break  # Found valid info, stop searching
                         else:
                             print(f"No release info found for '{search_term}', trying next variation")
@@ -243,25 +272,42 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                     pass
                 continue
         
-        # If no digital date from Vuniper, check custom dates file
+                # If no digital date from Vuniper, check custom dates file
         if vuniper_info and not vuniper_info.get('digital_date') and custom_dates:
             # Try to match against custom dates with flexible matching
             title_lower = title.lower()
             matched_custom_date = None
             
-            # Try exact match first
-            if title_lower in custom_dates:
-                matched_custom_date = custom_dates[title_lower]
+            # Create title variations for matching
+            title_variations = [
+                title_lower,
+                title_lower.replace(":", ""),  # Remove colons
+                title_lower.replace(":", " "),  # Replace colons with spaces
+            ]
+            
+            # Handle "The" prefix
+            if title_lower.startswith("the "):
+                title_variations.append(title_lower.replace("the ", "").strip())
             else:
-                # Try partial matching
+                title_variations.append(f"the {title_lower}")
+            
+            # Try exact matches first
+            for variation in title_variations:
+                if variation in custom_dates:
+                    matched_custom_date = custom_dates[variation]
+                    print(f"Exact match found: '{variation}' = {matched_custom_date}")
+                    break
+            
+            # If no exact match, try partial matching
+            if not matched_custom_date:
                 for custom_title, custom_date in custom_dates.items():
-                    # Check if custom title is contained in search title or vice versa
-                    if (custom_title in title_lower or title_lower in custom_title or
-                        # Check without "the" prefix
-                        custom_title.replace("the ", "") in title_lower.replace("the ", "") or
-                        title_lower.replace("the ", "") in custom_title.replace("the ", "")):
-                        matched_custom_date = custom_date
-                        print(f"Matched custom date: '{custom_title}' -> '{title}' = {custom_date}")
+                    for variation in title_variations:
+                        # Check if titles are similar (contains each other)
+                        if (custom_title in variation or variation in custom_title):
+                            matched_custom_date = custom_date
+                            print(f"Partial match found: '{custom_title}' -> '{variation}' = {matched_custom_date}")
+                            break
+                    if matched_custom_date:
                         break
             
             if matched_custom_date:
@@ -276,11 +322,152 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                 except:
                     vuniper_info['status'] = 'Soon'
         
+        # If still no info found, try custom dates as fallback
+        if not vuniper_info and custom_dates:
+            title_lower = title.lower()
+            matched_custom_date = None
+            
+            # Try exact match first
+            if title_lower in custom_dates:
+                matched_custom_date = custom_dates[title_lower]
+            else:
+                # Try partial matching with important words
+                if important_words:
+                    for custom_title, custom_date in custom_dates.items():
+                        # Check if any important words match
+                        if any(word.lower() in custom_title for word in important_words):
+                            matched_custom_date = custom_date
+                            print(f"Matched custom date by keywords: '{custom_title}' -> '{title}' = {custom_date}")
+                            break
+            
+            if matched_custom_date:
+                current_date = datetime.now()
+                try:
+                    digital_obj = datetime.strptime(matched_custom_date, "%Y-%m-%d")
+                    status = 'Yes' if digital_obj <= current_date else 'Soon'
+                except:
+                    status = 'Soon'
+                
+                vuniper_info = {
+                    'theater_date': None,
+                    'digital_date': matched_custom_date,
+                    'status': status
+                }
+                print(f"Using custom date as primary source for '{title}': {matched_custom_date}")
+        
         return vuniper_info
         
     except Exception as e:
         print(f"Error searching Vuniper for '{title}': {str(e)}")
         return None
+    
+def load_custom_digital_dates():
+    """Load custom digital release dates from a text file."""
+    custom_dates = {}
+    try:
+        # Look for digital_dates.txt in the same directory as the script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        dates_file = os.path.join(script_dir, "digital_dates.txt")
+        
+        if os.path.exists(dates_file):
+            with open(dates_file, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line or line.startswith('#'):  # Skip empty lines and comments
+                        continue
+                    
+                    # Parse format: "Movie Title MONTH DAY" or "Movie Title DAY MONTH" or with year
+                    # Examples: "F1 August 26", "28 Years Later 30 july", "Superman August 26, 2025"
+                    
+                    # Handle comma-separated year first
+                    if ',' in line:
+                        # Format: "Movie Title Month Day, Year"
+                        parts_before_comma = line.split(',')[0].strip().split()
+                        year_part = line.split(',')[1].strip()
+                        
+                        if len(parts_before_comma) >= 3:
+                            title = ' '.join(parts_before_comma[:-2]).strip()
+                            month_str = parts_before_comma[-2]
+                            day_str = parts_before_comma[-1]
+                            year_str = year_part
+                        else:
+                            print(f"Warning: Invalid format on line {line_num}: {line}")
+                            continue
+                    else:
+                        # Format without comma
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            # Check if last part is a year (4 digits)
+                            if len(parts) >= 4 and parts[-1].isdigit() and len(parts[-1]) == 4:
+                                # Format: "Movie Title Month Day Year"
+                                title = ' '.join(parts[:-3]).strip()
+                                month_str = parts[-3]
+                                day_str = parts[-2]
+                                year_str = parts[-1]
+                            else:
+                                # Check if it's "DAY MONTH" format (day first)
+                                if parts[-2].isdigit():
+                                    # Format: "Movie Title DAY MONTH" (assume 2025)
+                                    title = ' '.join(parts[:-2]).strip()
+                                    day_str = parts[-2]
+                                    month_str = parts[-1]
+                                    year_str = "2025"
+                                else:
+                                    # Format: "Movie Title MONTH DAY" (assume 2025)
+                                    title = ' '.join(parts[:-2]).strip()
+                                    month_str = parts[-2]
+                                    day_str = parts[-1]
+                                    year_str = "2025"
+                        else:
+                            print(f"Warning: Invalid format on line {line_num}: {line}")
+                            continue
+                    
+                    # Convert month name to number
+                    month_map = {
+                        'january': '01', 'february': '02', 'march': '03', 'april': '04',
+                        'may': '05', 'june': '06', 'july': '07', 'august': '08',
+                        'september': '09', 'october': '10', 'november': '11', 'december': '12',
+                        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+                        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+                        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+                    }
+                    
+                    month_num = month_map.get(month_str.lower())
+                    if month_num and day_str.isdigit():
+                        # Format as YYYY-MM-DD
+                        formatted_date = f"{year_str}-{month_num}-{day_str.zfill(2)}"
+                        
+                        # Store multiple variations of the title for better matching
+                        title_variations = [
+                            title.lower(),
+                            title.lower().replace(":", ""),  # Remove colons
+                            title.lower().replace(":", " "),  # Replace colons with spaces
+                        ]
+                        
+                        # Handle "The" prefix variations
+                        if title.lower().startswith("the "):
+                            title_variations.append(title.lower().replace("the ", "").strip())
+                        else:
+                            title_variations.append(f"the {title.lower()}")
+                        
+                        # Store all variations
+                        for variation in title_variations:
+                            custom_dates[variation] = formatted_date
+                        
+                        print(f"Loaded custom date: '{title}' -> {formatted_date}")
+                    else:
+                        print(f"Warning: Could not parse date on line {line_num}: {line}")
+        else:
+            print("No digital_dates.txt file found. Create one in the same directory as this script.")
+            print("Format examples:")
+            print("'Movie Title Month Day' -> 'F1 August 26'")
+            print("'Movie Title Day Month' -> '28 Years Later 30 july'")
+            print("'Movie Title Month Day, Year' -> 'Superman August 26, 2025'")
+    
+    except Exception as e:
+        print(f"Error loading custom digital dates: {str(e)}")
+    
+    return custom_dates
 
 def extract_vuniper_release_info(driver):
     """Extract release information from Vuniper movie page with improved detection."""
@@ -445,16 +632,18 @@ def extract_title(line):
     return line.split('\t')[0].strip()
 
 def display_results(results):
-    """Display the results in the output text widget."""
+    """Display the results in the output text widget with both theatrical and digital dates."""
     output_text.config(state=tk.NORMAL)
     output_text.delete("1.0", tk.END)
     
-    output_text.insert(tk.END, f"{'Title':<45} | {'Release Type':<15} | {'Release Date':<12} | Downloadable?\n")
-    output_text.insert(tk.END, "-" * 95 + "\n")
+    output_text.insert(tk.END, f"{'Title':<40} | {'Theater Date':<12} | {'Digital Date':<12} | {'Status':<12}\n")
+    output_text.insert(tk.END, "-" * 85 + "\n")
     
     for result in results:
-        release_type = "Digital/Streaming" if result['status'] in ['Yes', 'Soon'] else "Theater Only"
-        output_text.insert(tk.END, f"{result['title']:<45} | {release_type:<15} | {result['date']:<12} | {result['status']}\n")
+        theater_date = result.get('theater_date', 'TBD') or 'TBD'
+        digital_date = result.get('digital_date', 'TBD') or 'TBD'
+        
+        output_text.insert(tk.END, f"{result['title']:<40} | {theater_date:<12} | {digital_date:<12} | {result['status']:<12}\n")
     
     output_text.config(state=tk.DISABLED)
 
@@ -467,11 +656,19 @@ def sort_results():
     
     if sort_by == "Title":
         sorted_results = sorted(movie_results, key=lambda x: x['title'].lower())
-    elif sort_by == "Release Date":
+    elif sort_by == "Theater Date":
         def date_sort_key(x):
-            if x['date'] == "TBD" or x['date'] == "-":
+            date = x.get('theater_date', 'TBD')
+            if date == "TBD" or date == "-":
                 return "9999-12-31"
-            return x['date']
+            return date
+        sorted_results = sorted(movie_results, key=date_sort_key)
+    elif sort_by == "Digital Date":
+        def date_sort_key(x):
+            date = x.get('digital_date', 'TBD')
+            if date == "TBD" or date == "-":
+                return "9999-12-31"
+            return date
         sorted_results = sorted(movie_results, key=date_sort_key)
     elif sort_by == "Downloadable":
         status_order = {"Yes": 1, "Soon": 2, "TBD": 3, "No": 4}
@@ -480,8 +677,6 @@ def sort_results():
         sorted_results = movie_results
     
     display_results(sorted_results)
-
-# ... existing code for open_settings_window, generate_html_report, etc. remains the same ...
 
 def check_movies():
     global movie_results
@@ -530,26 +725,15 @@ def check_movies():
             # Search TMDb for poster and description
             tmdb_data = search_movie_tmdb(title)
             
-            # Prepare movie result
+            # Prepare movie result with separate theater and digital dates
+            theater_date = "TBD"
+            digital_date = "TBD"
+            status = "TBD"
+            
             if vuniper_info:
-                # Determine which date to show and release type
-                if vuniper_info.get('digital_date'):
-                    # Has digital/streaming date - use that
-                    display_date = vuniper_info['digital_date']
-                    release_type = 'Digital/Streaming'
-                elif vuniper_info.get('theater_date'):
-                    # Only theater date available
-                    display_date = vuniper_info['theater_date']
-                    release_type = 'Theater Only'
-                else:
-                    display_date = "TBD"
-                    release_type = 'TBD'
-                
+                theater_date = vuniper_info.get('theater_date') or "TBD"
+                digital_date = vuniper_info.get('digital_date') or "TBD"
                 status = vuniper_info.get('status', 'TBD')
-            else:
-                display_date = "TBD"
-                release_type = 'TBD'
-                status = "TBD"
             
             poster_url = ''
             overview = 'No description available.'
@@ -563,8 +747,8 @@ def check_movies():
             
             movie_results.append({
                 'title': title,
-                'type': release_type,
-                'date': display_date,
+                'theater_date': theater_date,
+                'digital_date': digital_date,
                 'status': status,
                 'poster_url': poster_url,
                 'overview': overview,
@@ -1035,10 +1219,11 @@ def generate_html_content():
         # Handle Ombi link
         ombi_link_html = ""
         if OMBI_SITE_URL and movie.get('movie_id'):
-            ombi_link_html = f'<a href="{OMBI_SITE_URL}/search/movie/{movie["movie_id"]}" target="_blank" class="ombi-link">Request on Ombi</a>'
+            ombi_link_html = f'<a href="{OMBI_SITE_URL}/details/movie/{movie["movie_id"]}" target="_blank" class="ombi-link">Ombi</a>'
         
-        # Format release date
-        release_date = movie['date'] if movie['date'] != 'TBD' else 'To Be Determined'
+        # Format release dates
+        theater_date = movie.get('theater_date', 'TBD') if movie.get('theater_date') != 'TBD' else 'TBD'
+        digital_date = movie.get('digital_date', 'TBD') if movie.get('digital_date') != 'TBD' else 'TBD'
         
         html += f"""
             <div class="movie-card">
@@ -1047,7 +1232,10 @@ def generate_html_content():
                     <div class="movie-title">{movie['title']}</div>
                     <div class="movie-overview">{movie['overview']}</div>
                     <div class="movie-meta">
-                        <span class="release-date">📅 {release_date}</span>
+                        <div style="display: flex; flex-direction: column; gap: 5px;">
+                            <span class="release-date">🎭 Theater: {theater_date}</span>
+                            <span class="release-date">💿 Digital: {digital_date}</span>
+                        </div>
                         <span class="status-badge {status_class}">{movie['status']}</span>
                     </div>
                     {ombi_link_html}
@@ -1087,7 +1275,7 @@ tk.Button(controls_frame, text="Check Availability", command=check_movies).pack(
 tk.Label(controls_frame, text="Sort by:").pack(side=tk.LEFT, padx=(0, 5))
 sort_var = tk.StringVar(value="Title")
 sort_dropdown = ttk.Combobox(controls_frame, textvariable=sort_var, 
-                            values=["Title", "Type", "Release Date", "Downloadable"], 
+                            values=["Title", "Theater Date", "Digital Date", "Downloadable"], 
                             state="readonly", width=15)
 sort_dropdown.pack(side=tk.LEFT, padx=(0, 10))
 tk.Button(controls_frame, text="Sort", command=sort_results).pack(side=tk.LEFT, padx=(0, 20))

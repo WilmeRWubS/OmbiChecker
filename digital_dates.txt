@@ -1,0 +1,7 @@
+# Custom digital release dates
+# Format: Movie Title Month Day, Year
+# or: Movie Title Month Day (assumes 2025)
+
+Jurassic World: Rebirth August 5
+Superman August 26 
+28 Years Later 30 july
