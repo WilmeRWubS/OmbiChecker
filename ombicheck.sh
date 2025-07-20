@@ -12,6 +12,9 @@ OMBI_DB_PATH="/opt/Ombi/Ombi.db"
 USE_OMBI_DB="yes"  # "yes" or "no"
 INCLUDE_TV_SHOWS="no"  # "yes" or "no"
 FILTER_UNAVAILABLE="yes"  # "yes" to only process unavailable items, "no" for all
+DIGITAL_DATES_FILE="./digital_dates.txt"  # Custom digital dates file
+CHROME_BINARY="/usr/bin/google-chrome"  # Path to Chrome binary
+CHROMEDRIVER_PATH="/usr/bin/chromedriver"  # Path to ChromeDriver
 
 # Colors for output
 RED='\033[0;31m'
@@ -26,185 +29,594 @@ usage() {
     echo ""
     echo "Modes:"
     echo "  File mode (default):"
-    echo "    -i INPUT_FILE    Input file with movie list (one movie per line)"
-    echo "    -o OUTPUT_FILE   Output HTML file path"
+    echo "    $0 -f INPUT_FILE -o OUTPUT_FILE"
     echo ""
-    echo "  Ombi Database mode:"
-    echo "    -d DATABASE_PATH Path to Ombi.db file (default: /opt/Ombi/Ombi.db)"
-    echo "    -o OUTPUT_FILE   Output HTML file path"
-    echo "    --ombi           Use Ombi database instead of input file"
-    echo "    --include-tv     Include TV shows from Ombi database"
-    echo "    --all-requests   Include all requests (not just unavailable ones)"
+    echo "  Database mode:"
+    echo "    $0 -d OMBI_DB_PATH -o OUTPUT_FILE"
     echo ""
-    echo "Optional:"
-    echo "  -t TOKEN         TMDb Bearer Token (overrides config)"
-    echo "  -l LANGUAGE      Language code (default: nl-NL)"
-    echo "  -u URL           Ombi site URL"
-    echo "  -b URL           Custom background image URL"
-    echo "  -h               Show this help"
+    echo "Options:"
+    echo "  -f FILE         Input file with movie titles"
+    echo "  -d DATABASE     Ombi database path"
+    echo "  -o OUTPUT       Output HTML file"
+    echo "  -u              Filter unavailable items only"
+    echo "  -t              Include TV shows (database mode only)"
+    echo "  -h              Show this help"
     echo ""
     echo "Examples:"
-    echo "  File mode:     $0 -i movies.txt -o report.html"
-    echo "  Ombi mode:     $0 --ombi -o report.html"
-    echo "  Ombi with TV:  $0 --ombi --include-tv -o report.html"
+    echo "  $0 -f movies.txt -o report.html"
+    echo "  $0 -d /opt/Ombi/Ombi.db -o report.html -u"
 }
 
+# Function to check dependencies
 check_dependencies() {
     local missing_deps=()
-
-    if ! command -v curl &> /dev/null; then
-        missing_deps+=("curl")
-    fi
-
-    if ! command -v jq &> /dev/null; then
-        missing_deps+=("jq")
-    fi
-
-    if [[ "$USE_OMBI_DB" == "yes" ]] && ! command -v sqlite3 &> /dev/null; then
-        missing_deps+=("sqlite3")
-    fi
-
-    if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        echo -e "${RED}Error: Missing required dependencies: ${missing_deps[*]}${NC}"
-        echo "Please install the missing dependencies and try again."
-        exit 1
-    fi
-}
-
-extract_movies_from_ombi() {
-    echo -e "${BLUE}Extracting movies from Ombi database...${NC}"
+    local chrome_missing=false
+    local chromedriver_missing=false
     
-    if [[ ! -f "$OMBI_DB_PATH" ]]; then
-        echo -e "${RED}Error: Ombi database not found at $OMBI_DB_PATH${NC}"
-        exit 1
-    fi
+    echo -e "${BLUE}Checking dependencies...${NC}"
     
-    # Check if sqlite3 is available
-    if ! command -v sqlite3 &> /dev/null; then
-        echo -e "${RED}Error: sqlite3 is required but not installed${NC}"
-        exit 1
-    fi
-    
-    local where_clause=""
-    if [[ "$FILTER_UNAVAILABLE" == "yes" ]]; then
-        where_clause="WHERE Available = 0 AND (Denied IS NULL OR Denied = 0)"
-    else
-        where_clause="WHERE (Denied IS NULL OR Denied = 0)"
-    fi
-    
-    # Extract movies from MovieRequests table
-    local movie_query="SELECT Title, TheMovieDbId FROM MovieRequests $where_clause;"
-    
-    echo -e "  Querying MovieRequests table..."
-    sqlite3 "$OMBI_DB_PATH" "$movie_query" | while IFS='|' read -r title tmdb_id; do
-        if [[ -n "$title" && -n "$tmdb_id" ]]; then
-            echo "$title|$tmdb_id|movie" >> /tmp/ombi_requests.txt
+    # Check for required commands
+    for cmd in curl jq sqlite3; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_deps+=("$cmd")
+            echo -e "${RED}✗ Missing: $cmd${NC}"
+        else
+            echo -e "${GREEN}✓ Found: $cmd${NC}"
         fi
     done
     
-    # Extract TV shows if requested
-    if [[ "$INCLUDE_TV_SHOWS" == "yes" ]]; then
-        echo -e "  Querying TvRequests table..."
-        # Note: TvRequests uses TvDbId, not TheMovieDbId, so we'll need to handle this differently
-        local tv_query="SELECT Title, TvDbId FROM TvRequests;"
-        
-        sqlite3 "$OMBI_DB_PATH" "$tv_query" | while IFS='|' read -r title tvdb_id; do
-            if [[ -n "$title" && -n "$tvdb_id" ]]; then
-                echo "$title|$tvdb_id|tv" >> /tmp/ombi_requests.txt
-            fi
-        done
+    # Check for Python
+    if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
+        missing_deps+=("python3")
+        echo -e "${RED}✗ Missing: python3${NC}"
+    else
+        echo -e "${GREEN}✓ Found: python3${NC}"
     fi
     
-    local total_count=$(wc -l < /tmp/ombi_requests.txt 2>/dev/null || echo "0")
-    echo -e "${GREEN}  Extracted $total_count items from Ombi database${NC}"
+    # Check for Chrome/Chromium
+    echo "Checking for Chrome..."
+    if [[ -f "$CHROME_BINARY" ]]; then
+        echo -e "${GREEN}✓ Found Chrome at: $CHROME_BINARY${NC}"
+    elif command -v google-chrome &> /dev/null; then
+        CHROME_BINARY="google-chrome"
+        echo -e "${GREEN}✓ Found Chrome: google-chrome${NC}"
+    elif command -v chromium-browser &> /dev/null; then
+        CHROME_BINARY="chromium-browser"
+        echo -e "${GREEN}✓ Found Chromium: chromium-browser${NC}"
+    elif command -v chromium &> /dev/null; then
+        CHROME_BINARY="chromium"
+        echo -e "${GREEN}✓ Found Chromium: chromium${NC}"
+    else
+        chrome_missing=true
+        echo -e "${RED}✗ Chrome/Chromium not found${NC}"
+    fi
+    
+    # Check for Selenium
+    echo "Checking for Selenium..."
+    if python3 -c "import selenium" 2>/dev/null; then
+        echo -e "${GREEN}✓ Selenium available for python3${NC}"
+    elif python -c "import selenium" 2>/dev/null; then
+        echo -e "${GREEN}✓ Selenium available for python${NC}"
+    else
+        missing_deps+=("python3-selenium")
+        echo -e "${RED}✗ Missing: python3-selenium${NC}"
+    fi
+    
+    # Check for webdriver-manager (optional but recommended)
+    echo "Checking for webdriver-manager..."
+    if python3 -c "import webdriver_manager" 2>/dev/null; then
+        echo -e "${GREEN}✓ webdriver-manager available (ChromeDriver will be auto-managed)${NC}"
+    elif python -c "import webdriver_manager" 2>/dev/null; then
+        echo -e "${GREEN}✓ webdriver-manager available (ChromeDriver will be auto-managed)${NC}"
+    else
+        echo -e "${YELLOW}⚠ webdriver-manager not found (will try system ChromeDriver)${NC}"
+        # Check for ChromeDriver manually
+        if [[ -f "$CHROMEDRIVER_PATH" ]]; then
+            echo -e "${GREEN}✓ Found ChromeDriver at: $CHROMEDRIVER_PATH${NC}"
+        elif command -v chromedriver &> /dev/null; then
+            echo -e "${GREEN}✓ Found ChromeDriver in PATH${NC}"
+        else
+            chromedriver_missing=true
+            echo -e "${RED}✗ ChromeDriver not found${NC}"
+        fi
+    fi
+    
+    # If dependencies are missing, provide installation guide
+    if [[ ${#missing_deps[@]} -gt 0 || "$chrome_missing" == true || "$chromedriver_missing" == true ]]; then
+        echo -e "${RED}Missing dependencies detected!${NC}"
+        echo ""
+        
+        # Basic dependencies
+        if [[ ${#missing_deps[@]} -gt 0 ]]; then
+            echo -e "${YELLOW}Step 1: Install basic dependencies${NC}"
+            echo "Run the following command:"
+            echo -e "${GREEN}sudo apt-get update && sudo apt-get install -y curl jq sqlite3 python3 python3-pip${NC}"
+            echo ""
+        fi
+        
+        # Chrome installation
+        if [[ "$chrome_missing" == true ]]; then
+            echo -e "${YELLOW}Step 2: Install Google Chrome${NC}"
+            echo "Run these commands one by one:"
+            echo -e "${GREEN}# Download Chrome package"
+            echo "wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
+            echo ""
+            echo "# Install Chrome"
+            echo "sudo apt-get install -y ./google-chrome-stable_current_amd64.deb"
+            echo ""
+            echo "# Clean up"
+            echo "rm google-chrome-stable_current_amd64.deb${NC}"
+            echo ""
+            echo "If you encounter dependency issues, run:"
+            echo -e "${GREEN}sudo apt-get install -f${NC}"
+            echo ""
+        fi
+        
+        # Selenium installation
+        if [[ " ${missing_deps[@]} " =~ " python3-selenium " ]]; then
+            echo -e "${YELLOW}Step 3: Install Selenium and WebDriver Manager${NC}"
+            echo "Run these commands:"
+            echo -e "${GREEN}pip3 install selenium webdriver-manager${NC}"
+            echo ""
+        fi
+        
+        # ChromeDriver note
+        if [[ "$chromedriver_missing" == true ]]; then
+            echo -e "${YELLOW}Step 4: Install webdriver-manager (recommended)${NC}"
+            echo "This will automatically manage ChromeDriver:"
+            echo -e "${GREEN}pip3 install webdriver-manager${NC}"
+            echo ""
+            echo "Or manually install ChromeDriver:"
+            echo -e "${GREEN}# Download ChromeDriver"
+            echo "CHROME_VERSION=\$(google-chrome --version | grep -oP '\\d+\\.\\d+\\.\\d+\\.\\d+')"
+            echo "wget -O /tmp/chromedriver.zip \"https://chromedriver.storage.googleapis.com/LATEST_RELEASE_\${CHROME_VERSION%.*.*}/chromedriver_linux64.zip\""
+            echo "unzip /tmp/chromedriver.zip -d /tmp/"
+            echo "sudo mv /tmp/chromedriver /usr/bin/chromedriver"
+            echo "sudo chmod +x /usr/bin/chromedriver${NC}"
+            echo ""
+        fi
+        
+        echo -e "${BLUE}After installing the dependencies, run this script again.${NC}"
+        echo ""
+        echo -e "${YELLOW}Quick install (all at once):${NC}"
+        echo -e "${GREEN}sudo apt-get update && sudo apt-get install -y curl jq sqlite3 python3 python3-pip && \\"
+        echo "wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \\"
+        echo "sudo apt-get install -y ./google-chrome-stable_current_amd64.deb && \\"
+        echo "rm google-chrome-stable_current_amd64.deb && \\"
+        echo "pip3 install selenium webdriver-manager${NC}"
+        
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✓ All dependencies are satisfied${NC}"
+    echo ""
 }
 
-search_tv_show() {
+# Function to standardize date format
+standardize_date() {
+    local date_str="$1"
+    
+    if [[ -z "$date_str" ]]; then
+        echo ""
+        return
+    fi
+    
+    # Try different date formats and convert to YYYY-MM-DD
+    if date -d "$date_str" "+%Y-%m-%d" 2>/dev/null; then
+        date -d "$date_str" "+%Y-%m-%d"
+    elif [[ "$date_str" =~ ^[0-9]{4}$ ]]; then
+        # Year only - assume January 1st
+        echo "${date_str}-01-01"
+    else
+        echo ""
+    fi
+}
+
+# Function to load custom digital dates
+load_custom_digital_dates() {
+    declare -A custom_dates
+    
+    if [[ -f "$DIGITAL_DATES_FILE" ]]; then
+        echo -e "${BLUE}Loading custom digital dates from $DIGITAL_DATES_FILE${NC}"
+        
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Skip empty lines and comments
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+            
+            # Parse format: "Movie Title MONTH DAY" or "Movie Title DAY MONTH" or with year
+            if [[ "$line" =~ ^(.+)[[:space:]]+([A-Za-z]+)[[:space:]]+([0-9]{1,2})(,[[:space:]]*([0-9]{4}))?$ ]]; then
+                title="${BASH_REMATCH[1]}"
+                month="${BASH_REMATCH[2]}"
+                day="${BASH_REMATCH[3]}"
+                year="${BASH_REMATCH[5]:-2025}"
+                
+                # Convert month name to number
+                case "${month,,}" in
+                    january|jan) month_num="01" ;;
+                    february|feb) month_num="02" ;;
+                    march|mar) month_num="03" ;;
+                    april|apr) month_num="04" ;;
+                    may) month_num="05" ;;
+                    june|jun) month_num="06" ;;
+                    july|jul) month_num="07" ;;
+                    august|aug) month_num="08" ;;
+                    september|sep) month_num="09" ;;
+                    october|oct) month_num="10" ;;
+                    november|nov) month_num="11" ;;
+                    december|dec) month_num="12" ;;
+                    *) continue ;;
+                esac
+                
+                formatted_date="${year}-${month_num}-$(printf "%02d" "$day")"
+                custom_dates["${title,,}"]="$formatted_date"
+                echo "  Loaded: $title -> $formatted_date"
+            fi
+        done < "$DIGITAL_DATES_FILE"
+    fi
+    
+    # Export the associative array for use in other functions
+    declare -p custom_dates > /tmp/custom_dates.sh
+}
+
+# Function to search movie on Vuniper using headless Chrome
+search_movie_vuniper() {
     local title="$1"
-    local encoded_title=$(echo "$title" | sed 's/ /%20/g' | sed 's/&/%26/g')
+    local temp_dir="/tmp/vuniper_$$"
+    local result_file="$temp_dir/result.json"
     
-    local response=$(curl -s -H "Authorization: Bearer $TMDB_BEARER_TOKEN" \
-        -H "accept: application/json" \
-        "https://api.themoviedb.org/3/search/tv?query=$encoded_title&language=$HTML_LANGUAGE")
+    mkdir -p "$temp_dir"
     
-    echo "$response"
+    # Create a Python script for Selenium automation with webdriver-manager
+    cat > "$temp_dir/vuniper_search.py" << 'EOF'
+import sys
+import json
+import time
+import re
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+
+# Try to use webdriver-manager for automatic ChromeDriver management
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+    use_webdriver_manager = True
+except ImportError:
+    use_webdriver_manager = False
+
+def standardize_date(date_str):
+    if not date_str:
+        return None
+    try:
+        date_str = date_str.strip()
+        # Handle various date formats
+        if re.match(r'[A-Za-z]{3}\s+\d{1,2},\s+\d{4}', date_str):
+            date_obj = datetime.strptime(date_str, "%b %d, %Y")
+            return date_obj.strftime("%Y-%m-%d")
+        elif re.match(r'[A-Za-z]+\s+\d{1,2},\s+\d{4}', date_str):
+            date_obj = datetime.strptime(date_str, "%B %d, %Y")
+            return date_obj.strftime("%Y-%m-%d")
+        elif re.match(r'\d{1,2}/\d{1,2}/\d{4}', date_str):
+            date_obj = datetime.strptime(date_str, "%m/%d/%Y")
+            return date_obj.strftime("%Y-%m-%d")
+        elif re.match(r'\d{4}-\d{1,2}-\d{1,2}', date_str):
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            return date_obj.strftime("%Y-%m-%d")
+        return None
+    except:
+        return None
+
+def search_vuniper(title):
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-plugins")
+    chrome_options.add_argument("--disable-images")
+    
+    try:
+        # Use webdriver-manager if available, otherwise try system ChromeDriver
+        if use_webdriver_manager:
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        else:
+            # Try to find ChromeDriver in common locations
+            chromedriver_paths = [
+                "/usr/bin/chromedriver",
+                "/usr/local/bin/chromedriver",
+                "/opt/chromedriver",
+                "chromedriver"  # In PATH
+            ]
+            
+            driver = None
+            for path in chromedriver_paths:
+                try:
+                    if path == "chromedriver":
+                        driver = webdriver.Chrome(options=chrome_options)
+                    else:
+                        service = Service(path)
+                        driver = webdriver.Chrome(service=service, options=chrome_options)
+                    break
+                except:
+                    continue
+            
+            if not driver:
+                raise Exception("ChromeDriver not found in common locations")
+        
+        driver.get("https://vuniper.com")
+        time.sleep(2)
+        
+        # Search for the movie
+        search_input = driver.find_element(By.ID, "search-input")
+        search_input.clear()
+        search_input.send_keys(title)
+        time.sleep(3)
+        
+        # Look for suggestions
+        suggestions = driver.find_elements(By.CSS_SELECTOR, ".search-suggestion")
+        
+        if suggestions:
+            # Click first relevant suggestion
+            best_suggestion = None
+            for suggestion in suggestions:
+                if "2025" in suggestion.text.lower():
+                    best_suggestion = suggestion
+                    break
+            
+            if not best_suggestion and suggestions:
+                best_suggestion = suggestions[0]
+            
+            if best_suggestion:
+                best_suggestion.click()
+                time.sleep(4)
+                
+                # Extract release info
+                release_info = {'theater_date': None, 'digital_date': None, 'status': 'TBD'}
+                
+                # Look for theater date
+                try:
+                    theater_element = driver.find_element(By.XPATH, "//span[contains(text(), 'Theaters')]/preceding-sibling::span[@class='semibold']")
+                    theater_date = standardize_date(theater_element.text.strip())
+                    if theater_date:
+                        release_info['theater_date'] = theater_date
+                except:
+                    pass
+                
+                # Look for digital date
+                try:
+                    digital_element = driver.find_element(By.XPATH, "//span[contains(text(), 'Streaming')]/preceding-sibling::span[@class='semibold']")
+                    digital_date = standardize_date(digital_element.text.strip())
+                    if digital_date:
+                        release_info['digital_date'] = digital_date
+                except:
+                    pass
+                
+                # Determine status
+                current_date = datetime.now()
+                if release_info['digital_date']:
+                    try:
+                        digital_obj = datetime.strptime(release_info['digital_date'], "%Y-%m-%d")
+                        release_info['status'] = 'Yes' if digital_obj <= current_date else 'Soon'
+                    except:
+                        release_info['status'] = 'Soon'
+                elif release_info['theater_date']:
+                    try:
+                        theater_obj = datetime.strptime(release_info['theater_date'], "%Y-%m-%d")
+                        # Assume digital release 90 days after theater
+                        digital_estimate = theater_obj.replace(day=theater_obj.day + 90) if theater_obj.day <= 275 else theater_obj.replace(year=theater_obj.year + 1, month=1, day=theater_obj.day - 275)
+                        release_info['status'] = 'Yes' if digital_estimate <= current_date else 'Soon'
+                    except:
+                        release_info['status'] = 'Soon'
+                else:
+                    release_info['status'] = 'TBD'
+                
+                driver.quit()
+                return json.dumps(release_info)
+        
+        driver.quit()
+        return "null"
+        
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        try:
+            driver.quit()
+        except:
+            pass
+        return "null"
+
+if __name__ == "__main__":
+    title = sys.argv[1] if len(sys.argv) > 1 else ""
+    result = search_vuniper(title)
+    print(result)
+EOF
+
+    # Run the Python script
+    local python_cmd="python3"
+    if ! command -v python3 &> /dev/null; then
+        python_cmd="python"
+    fi
+    
+    local vuniper_result=$($python_cmd "$temp_dir/vuniper_search.py" "$title" 2>/dev/null)
+    
+    # Clean up
+    rm -rf "$temp_dir"
+    
+    echo "$vuniper_result"
 }
 
-get_tv_show_details() {
-    local tv_id="$1"
-    
-    local response=$(curl -s -H "Authorization: Bearer $TMDB_BEARER_TOKEN" \
-        -H "accept: application/json" \
-        "https://api.themoviedb.org/3/tv/$tv_id?language=$HTML_LANGUAGE")
-    
-    echo "$response"
-}
-
-# Function to extract movie title from line
-extract_title() {
-    local line="$1"
-    # Remove everything after first parenthesis
-    echo "$line" | sed 's/\s*(.*//' | sed 's/\t.*//' | xargs
-}
-
-# Function to search movie via TMDb API
-search_movie() {
+# Function to get movie info from TMDb
+get_tmdb_info() {
     local title="$1"
-    local encoded_title=$(echo "$title" | sed 's/ /%20/g' | sed 's/&/%26/g')
+    local encoded_title=$(printf '%s\n' "$title" | jq -sRr @uri)
     
     local response=$(curl -s -H "Authorization: Bearer $TMDB_BEARER_TOKEN" \
         -H "accept: application/json" \
-        "https://api.themoviedb.org/3/search/movie?query=$encoded_title&language=$HTML_LANGUAGE")
+        "https://api.themoviedb.org/3/search/movie?query=${encoded_title}&language=${HTML_LANGUAGE}")
     
-    echo "$response"
-}
-
-# Function to get release dates for a movie
-get_release_dates() {
-    local movie_id="$1"
-    
-    local response=$(curl -s -H "Authorization: Bearer $TMDB_BEARER_TOKEN" \
-        -H "accept: application/json" \
-        "https://api.themoviedb.org/3/movie/$movie_id/release_dates")
-    
-    echo "$response"
+    if [[ $(echo "$response" | jq -r '.results | length') -gt 0 ]]; then
+        echo "$response" | jq -r '.results[0]'
+    else
+        echo "null"
+    fi
 }
 
 # Function to determine downloadable status
 determine_status() {
-    local release_date="$1"
-    
-    if [[ -z "$release_date" || "$release_date" == "null" ]]; then
-        echo "TBD"
-        return
-    fi
-    
+    local theater_date="$1"
+    local digital_date="$2"
     local current_date=$(date +%Y-%m-%d)
     
-    if [[ "$release_date" < "$current_date" ]] || [[ "$release_date" == "$current_date" ]]; then
-        echo "Yes"
+    if [[ -n "$digital_date" && "$digital_date" != "null" ]]; then
+        # Convert dates to seconds for comparison
+        local digital_seconds=$(date -d "$digital_date" +%s 2>/dev/null)
+        local current_seconds=$(date -d "$current_date" +%s)
+        
+        if [[ -n "$digital_seconds" && "$digital_seconds" -le "$current_seconds" ]]; then
+            echo "Yes"
+        else
+            echo "Soon"
+        fi
+    elif [[ -n "$theater_date" && "$theater_date" != "null" ]]; then
+        # Estimate digital release 90 days after theater
+        local digital_estimate=$(date -d "$theater_date + 90 days" +%Y-%m-%d 2>/dev/null)
+        if [[ -n "$digital_estimate" ]]; then
+            local estimate_seconds=$(date -d "$digital_estimate" +%s)
+            local current_seconds=$(date -d "$current_date" +%s)
+            
+            if [[ "$estimate_seconds" -le "$current_seconds" ]]; then
+                echo "Yes"
+            else
+                echo "Soon"
+            fi
+        else
+            echo "Soon"
+        fi
     else
-        echo "Soon"
+        echo "TBD"
     fi
 }
 
-# Function to generate HTML content
-generate_html() {
-    local current_date=$(date '+%Y-%m-%d %H:%M')
-    local total_movies=0
-    local available_now=0
-    local coming_soon=0
-    local not_available=0
+# Function to extract movies from Ombi database
+extract_from_database() {
+    local db_path="$1"
+    local include_tv="$2"
+    local filter_unavailable="$3"
     
-    # Count movies by status
-    while IFS='|' read -r title type date status poster_url overview movie_id; do
-        ((total_movies++))
-        case "$status" in
-            "Yes") ((available_now++)) ;;
-            "Soon") ((coming_soon++)) ;;
-            *) ((not_available++)) ;;
-        esac
-    done < /tmp/movie_results.txt
+    if [[ ! -f "$db_path" ]]; then
+        echo -e "${RED}Error: Database file not found: $db_path${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}Extracting movies from Ombi database...${NC}" >&2
+    
+    local query="SELECT Title, Available FROM MovieRequests"
+    
+    if [[ "$filter_unavailable" == "yes" ]]; then
+        query="$query WHERE Available = 0"
+    fi
+    
+    # Add TV shows if requested
+    if [[ "$include_tv" == "yes" ]]; then
+        local tv_query="SELECT Title, Available FROM TvRequests"
+        if [[ "$filter_unavailable" == "yes" ]]; then
+            tv_query="$tv_query WHERE Available = 0"
+        fi
+        query="$query UNION $tv_query"
+    fi
+    
+    sqlite3 "$db_path" "$query" | while IFS='|' read -r title available; do
+        if [[ -n "$title" ]]; then
+            echo "$title"
+        fi
+    done
+}
+
+# Function to process a single movie
+process_movie() {
+    local title="$1"
+    local custom_dates_file="$2"
+    
+    echo -e "${YELLOW}Processing: $title${NC}"
+    
+    # Load custom dates if available
+    source /tmp/custom_dates.sh 2>/dev/null || declare -A custom_dates
+    
+    # Search Vuniper first
+    local vuniper_result=$(search_movie_vuniper "$title")
+    local theater_date=""
+    local digital_date=""
+    local status="TBD"
+    
+    if [[ "$vuniper_result" != "null" && -n "$vuniper_result" ]]; then
+        theater_date=$(echo "$vuniper_result" | jq -r '.theater_date // ""')
+        digital_date=$(echo "$vuniper_result" | jq -r '.digital_date // ""')
+        status=$(echo "$vuniper_result" | jq -r '.status // "TBD"')
+    fi
+    
+    # Check custom dates if no digital date from Vuniper
+    if [[ -z "$digital_date" || "$digital_date" == "null" ]]; then
+        local title_lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+        if [[ -n "${custom_dates[$title_lower]}" ]]; then
+            digital_date="${custom_dates[$title_lower]}"
+            status=$(determine_status "$theater_date" "$digital_date")
+            echo -e "${GREEN}  Using custom digital date: $digital_date${NC}"
+        fi
+    fi
+    
+    # Get TMDb info for poster and description
+    local tmdb_info=$(get_tmdb_info "$title")
+    local poster_url=""
+    local overview="No description available."
+    local movie_id=""
+    
+    if [[ "$tmdb_info" != "null" ]]; then
+        local poster_path=$(echo "$tmdb_info" | jq -r '.poster_path // ""')
+        if [[ -n "$poster_path" && "$poster_path" != "null" ]]; then
+            poster_url="https://image.tmdb.org/t/p/w500${poster_path}"
+        fi
+        overview=$(echo "$tmdb_info" | jq -r '.overview // "No description available."')
+        movie_id=$(echo "$tmdb_info" | jq -r '.id // ""')
+    fi
+    
+    # Create JSON result
+    local result=$(jq -n \
+        --arg title "$title" \
+        --arg theater_date "$theater_date" \
+        --arg digital_date "$digital_date" \
+        --arg status "$status" \
+        --arg poster_url "$poster_url" \
+        --arg overview "$overview" \
+        --arg movie_id "$movie_id" \
+        '{
+            title: $title,
+            theater_date: $theater_date,
+            digital_date: $digital_date,
+            status: $status,
+            poster_url: $poster_url,
+            overview: $overview,
+            movie_id: $movie_id
+        }')
+    
+    echo "$result"
+}
+
+# Function to generate HTML report
+generate_html_report() {
+    local results_file="$1"
+    local output_file="$2"
+    
+    echo -e "${BLUE}Generating HTML report...${NC}"
+    
+    local current_date=$(date "+%Y-%m-%d %H:%M")
+    local total_movies=$(jq length "$results_file")
+    local available_now=$(jq '[.[] | select(.status == "Yes")] | length' "$results_file")
+    local coming_soon=$(jq '[.[] | select(.status == "Soon")] | length' "$results_file")
+    local not_available=$(jq '[.[] | select(.status == "TBD" or .status == "No")] | length' "$results_file")
     
     # Determine background style
     local background_style=""
@@ -217,7 +629,7 @@ generate_html() {
         background_style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"
     fi
     
-    cat > "$OUTPUT_FILE" << EOF
+    cat > "$output_file" << EOF
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -412,27 +824,46 @@ generate_html() {
 EOF
 
     # Add movie cards
-    while IFS='|' read -r title type date status poster_url overview movie_id; do
-        local status_class="status-${status,,}"
-        local card_class="movie-card"
-        local card_onclick=""
-        
-        if [[ -n "$OMBI_SITE_URL" && -n "$movie_id" && "$movie_id" != "null" ]]; then
-            card_class="movie-card clickable"
-            card_onclick="onclick=\"window.open('$OMBI_SITE_URL/details/movie/$movie_id', '_blank')\""
-        fi
+    jq -r '.[] | @json' "$results_file" | while read -r movie_json; do
+        local title=$(echo "$movie_json" | jq -r '.title')
+        local theater_date=$(echo "$movie_json" | jq -r '.theater_date // ""')
+        local digital_date=$(echo "$movie_json" | jq -r '.digital_date // ""')
+        local status=$(echo "$movie_json" | jq -r '.status')
+        local poster_url=$(echo "$movie_json" | jq -r '.poster_url // ""')
+        local overview=$(echo "$movie_json" | jq -r '.overview // "No description available."')
+        local movie_id=$(echo "$movie_json" | jq -r '.movie_id // ""')
         
         # Truncate overview if too long
         if [[ ${#overview} -gt 150 ]]; then
             overview="${overview:0:150}..."
         fi
         
-        # Use default poster if empty
+        # Determine status class
+        local status_class="status-${status,,}"
+        
+        # Determine release date to display
+        local display_date="$digital_date"
+        if [[ -z "$display_date" || "$display_date" == "null" ]]; then
+            display_date="$theater_date"
+        fi
+        if [[ -z "$display_date" || "$display_date" == "null" ]]; then
+            display_date="TBD"
+        fi
+        
+        # Determine if card should be clickable
+        local card_class="movie-card"
+        local card_onclick=""
+        if [[ -n "$OMBI_SITE_URL" && -n "$movie_id" && "$movie_id" != "null" ]]; then
+            card_class="movie-card clickable"
+            card_onclick="onclick=\"window.open('$OMBI_SITE_URL/details/movie/$movie_id', '_blank')\""
+        fi
+        
+        # Default poster if none available
         if [[ -z "$poster_url" || "$poster_url" == "null" ]]; then
             poster_url='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjQ1MCIgdmlld0JveD0iMCAwIDMwMCA0NTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iNDUwIiBmaWxsPSIjRjhGOUZBIi8+CjxwYXRoIGQ9Ik0xNTAgMjI1QzE2NS4xNTUgMjI1IDE3Ny41IDIxMi42NTUgMTc3LjUgMTk3LjVDMTc3LjUgMTgyLjM0NSAxNjUuMTU1IDE3MCAxNTAgMTcwQzEzNC44NDUgMTcwIDEyMi41IDE4Mi4zNDUgMTIyLjUgMTk3LjVDMTIyLjUgMjEyLjY1NSAxMzQuODQ1IDIyNSAxNTAgMjI1WiIgZmlsbD0iI0RFRTJFNiIvPgo8cGF0aCBkPSJNMTg3LjUgMjU1SDE2Mi41VjI4MEgxMzcuNVYyNTVIMTEyLjVWMjMwSDE4Ny41VjI1NVoiIGZpbGw9IiNERUUyRTYiLz4KPC9zdmc+'
         fi
         
-                cat >> "$OUTPUT_FILE" << EOF
+        cat >> "$output_file" << EOF
             <div class="$card_class" $card_onclick>
                 <img src="$poster_url" alt="$title poster" class="movie-poster" 
                      onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjQ1MCIgdmlld0JveD0iMCAwIDMwMCA0NTAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iNDUwIiBmaWxsPSIjRjhGOUZBIi8+CjxwYXRoIGQ9Ik0xNTAgMjI1QzE2NS4xNTUgMjI1IDE3Ny41IDIxMi42NTUgMTc3LjUgMTk3LjVDMTc3LjUgMTgyLjM0NSAxNjUuMTU1IDE3MCAxNTAgMTcwQzEzNC44NDUgMTcwIDEyMi41IDE4Mi4zNDUgMTIyLjUgMTk3LjVDMTIyLjUgMjEyLjY1NSAxMzQuODQ1IDIyNSAxNTAgMjI1WiIgZmlsbD0iI0RFRTJFNiIvPgo8cGF0aCBkPSJNMTg3LjUgMjU1SDE2Mi41VjI4MEgxMzcuNVYyNTVIMTEyLjVWMjMwSDE4Ny41VjI1NVoiIGZpbGw9IiNERUUyRTYiLz4KPC9zdmc+'">
@@ -440,12 +871,12 @@ EOF
                     <h3 class="movie-title">$title</h3>
                     <div class="movie-details">
                         <div class="detail-row">
-                            <span class="detail-label">Release Type:</span>
-                            <span class="detail-value">$type</span>
+                            <span class="detail-label">Theater Date:</span>
+                            <span class="detail-value">$theater_date</span>
                         </div>
                         <div class="detail-row">
-                            <span class="detail-label">Release Date:</span>
-                            <span class="detail-value">$date</span>
+                            <span class="detail-label">Digital Date:</span>
+                            <span class="detail-value">$digital_date</span>
                         </div>
                         <div class="detail-row">
                             <span class="detail-label">Downloadable:</span>
@@ -456,416 +887,192 @@ EOF
                 </div>
             </div>
 EOF
-    done < /tmp/movie_results.txt
+    done
 
-    cat >> "$OUTPUT_FILE" << EOF
+    cat >> "$output_file" << EOF
         </div>
         
         <div class="footer">
-            <p>Generated by ombicheck.sh | Data from The Movie Database (TMDb) | <a href="https://github.com/WilmeRWubS/OmbiChecker" target="_blank" rel="noopener noreferrer">https://github.com/WilmeRWubS/OmbiChecker</a></p>
+            <p>Generated by ombicheck.sh | Data from Vuniper & The Movie Database (TMDb) | <a href="https://github.com/WilmeRWubS/OmbiChecker" target="_blank" rel="noopener noreferrer">https://github.com/WilmeRWubS/OmbiChecker</a></p>
         </div>
     </div>
 </body>
 </html>
 EOF
+
+    echo -e "${GREEN}HTML report generated: $output_file${NC}"
 }
 
-# Function to process movies
-process_movies() {
-    if [[ "$USE_OMBI_DB" == "yes" ]]; then
-        process_ombi_requests
-    else
-        process_file_input
-    fi
+# Function to display help
+show_help() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Options:
+    -f, --file FILE         Input file with movie titles (one per line)
+    -d, --database PATH     Extract movies from Ombi database
+    -t, --include-tv        Include TV shows when extracting from database
+    -u, --unavailable-only  Only process unavailable items from database
+    -c, --custom-dates FILE Custom digital release dates file
+    -o, --output FILE       Output HTML file (default: movie_report.html)
+    -h, --help             Show this help message
+
+Examples:
+    $0 -f movies.txt
+    $0 -d /path/to/ombi.db -u
+    $0 -f movies.txt -c custom_dates.txt -o my_report.html
+
+Custom dates file format:
+    Movie Title MONTH DAY
+    Movie Title MONTH DAY, YEAR
+    
+    Example:
+    Wicked November 22
+    Moana 2 November 27, 2024
+EOF
 }
 
-process_file_input() {
-    echo -e "${BLUE}Processing movies from $INPUT_FILE...${NC}"
+# Function to parse command line arguments and run the script
+main() {
+    local input_file=""
+    local database_path=""
+    local output_file="$OUTPUT_FILE"  # Use config default
+    local include_tv="$INCLUDE_TV_SHOWS"  # Use config default
+    local filter_unavailable="$FILTER_UNAVAILABLE"  # Use config default
+    local custom_dates_file="$DIGITAL_DATES_FILE"  # Use config default
     
-    # Clear temporary results file
-    > /tmp/movie_results.txt
-    
-    local count=0
-    local total=$(wc -l < "$INPUT_FILE")
-    
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        ((count++))
-        
-        # Skip empty lines
-        [[ -z "$line" ]] && continue
-        
-        echo -e "${YELLOW}[$count/$total] Processing: $line${NC}"
-        
-        local title=$(extract_title "$line")
-        
-        if [[ -z "$title" ]]; then
-            echo -e "${RED}  ✗ Could not extract title${NC}"
-            continue
-        fi
-        
-        echo -e "  Searching for: $title"
-        
-        # Search for movie
-        local search_result=$(search_movie "$title")
-        
-        if [[ -z "$search_result" || "$search_result" == "null" ]]; then
-            echo -e "${RED}  ✗ Movie not found in TMDb${NC}"
-            echo "$title|Not Found|-|No||Movie not found in TMDb database.|null" >> /tmp/movie_results.txt
-            continue
-        fi
-        
-        # Extract movie data using jq
-        local movie_id=$(echo "$search_result" | jq -r '.results[0].id // "null"')
-        local poster_path=$(echo "$search_result" | jq -r '.results[0].poster_path // ""')
-        local overview=$(echo "$search_result" | jq -r '.results[0].overview // "No description available."' | sed 's/|/;/g')
-        
-        if [[ "$movie_id" == "null" ]]; then
-            echo -e "${RED}  ✗ Invalid movie data${NC}"
-            echo "$title|Not Found|-|No||Movie not found in TMDb database.|null" >> /tmp/movie_results.txt
-            continue
-        fi
-        
-        # Build poster URL
-        local poster_url=""
-        if [[ -n "$poster_path" && "$poster_path" != "null" ]]; then
-            poster_url="https://image.tmdb.org/t/p/w500$poster_path"
-        fi
-        
-        echo -e "  Getting release dates..."
-        
-        # Get release dates
-        local release_data=$(get_release_dates "$movie_id")
-        
-        # Parse release data to find earliest digital/physical release
-        local earliest_date=""
-        local release_type="TBD"
-        
-        if [[ -n "$release_data" && "$release_data" != "null" ]]; then
-            # Extract digital (type 4) and physical (type 5) releases
-            local digital_dates=$(echo "$release_data" | jq -r '.results[].release_dates[] | select(.type == 4) | .release_date' 2>/dev/null | head -10)
-            local physical_dates=$(echo "$release_data" | jq -r '.results[].release_dates[] | select(.type == 5) | .release_date' 2>/dev/null | head -10)
-            
-            # Find earliest date
-            for date in $digital_dates $physical_dates; do
-                if [[ -n "$date" && "$date" != "null" ]]; then
-                    # Extract just the date part (first 10 characters)
-                    date="${date:0:10}"
-                    if [[ -z "$earliest_date" || "$date" < "$earliest_date" ]]; then
-                        earliest_date="$date"
-                        # Determine if it's digital or physical
-                        if echo "$digital_dates" | grep -q "$date"; then
-                            release_type="Digital"
-                        else
-                            release_type="Physical"
-                        fi
-                    fi
-                fi
-            done
-        fi
-        
-        # Determine status
-        local status=$(determine_status "$earliest_date")
-        
-        # Format date for display
-        local display_date="TBD"
-        if [[ -n "$earliest_date" ]]; then
-            display_date="$earliest_date"
-        fi
-        
-        echo -e "${GREEN}  ✓ $title - $release_type ($display_date) - $status${NC}"
-        
-        # Save to results file
-        echo "$title|$release_type|$display_date|$status|$poster_url|$overview|$movie_id" >> /tmp/movie_results.txt
-        
-        # Small delay to be nice to the API
-        sleep 0.1
-        
-    done < "$INPUT_FILE"
-    
-    echo -e "${GREEN}Processing complete!${NC}"
-}
-
-process_ombi_requests() {
-    echo -e "${BLUE}Processing requests from Ombi database...${NC}"
-    
-    # Clear temporary results file
-    > /tmp/movie_results.txt
-    
-    # Extract requests from Ombi database
-    extract_movies_from_ombi
-    
-    if [[ ! -f /tmp/ombi_requests.txt ]]; then
-        echo -e "${RED}No requests found in Ombi database${NC}"
-        return
-    fi
-    
-    local count=0
-    local total=$(wc -l < /tmp/ombi_requests.txt)
-    
-    while IFS='|' read -r title external_id media_type; do
-        ((count++))
-        
-        # Skip empty lines
-        [[ -z "$title" ]] && continue
-        
-        echo -e "${YELLOW}[$count/$total] Processing: $title ($media_type)${NC}"
-        
-        local tmdb_id=""
-        local search_result=""
-        local poster_path=""
-        local overview=""
-        
-        if [[ "$media_type" == "movie" ]]; then
-            # For movies, we already have the TMDb ID
-            tmdb_id="$external_id"
-            
-            # Get movie details directly
-            search_result=$(curl -s -H "Authorization: Bearer $TMDB_BEARER_TOKEN" \
-                -H "accept: application/json" \
-                "https://api.themoviedb.org/3/movie/$tmdb_id?language=$HTML_LANGUAGE")
-            
-            if [[ -n "$search_result" && "$search_result" != "null" ]]; then
-                poster_path=$(echo "$search_result" | jq -r '.poster_path // ""')
-                overview=$(echo "$search_result" | jq -r '.overview // "No description available."' | sed 's/|/;/g')
-            fi
-            
-        elif [[ "$media_type" == "tv" ]]; then
-            # For TV shows, we need to search by title since we have TvDbId, not TMDb ID
-            echo -e "  Searching for TV show: $title"
-            search_result=$(search_tv_show "$title")
-            
-            if [[ -n "$search_result" && "$search_result" != "null" ]]; then
-                tmdb_id=$(echo "$search_result" | jq -r '.results[0].id // "null"')
-                poster_path=$(echo "$search_result" | jq -r '.results[0].poster_path // ""')
-                overview=$(echo "$search_result" | jq -r '.results[0].overview // "No description available."' | sed 's/|/;/g')
-            fi
-        fi
-        
-        if [[ -z "$tmdb_id" || "$tmdb_id" == "null" ]]; then
-            echo -e "${RED}  ✗ Could not find TMDb ID for $title${NC}"
-            echo "$title|Not Found|-|No||$media_type not found in TMDb database.|null" >> /tmp/movie_results.txt
-            continue
-        fi
-        
-        # Build poster URL
-        local poster_url=""
-        if [[ -n "$poster_path" && "$poster_path" != "null" ]]; then
-            poster_url="https://image.tmdb.org/t/p/w500$poster_path"
-        fi
-        
-        if [[ "$media_type" == "movie" ]]; then
-            echo -e "  Getting release dates..."
-            
-            # Get release dates for movies
-            local release_data=$(get_release_dates "$tmdb_id")
-            
-            # Parse release data to find earliest digital/physical release
-            local earliest_date=""
-            local release_type="TBD"
-            
-            if [[ -n "$release_data" && "$release_data" != "null" ]]; then
-                # Extract digital (type 4) and physical (type 5) releases
-                local digital_dates=$(echo "$release_data" | jq -r '.results[].release_dates[] | select(.type == 4) | .release_date' 2>/dev/null | head -10)
-                local physical_dates=$(echo "$release_data" | jq -r '.results[].release_dates[] | select(.type == 5) | .release_date' 2>/dev/null | head -10)
-                
-                # Find earliest date
-                for date in $digital_dates $physical_dates; do
-                    if [[ -n "$date" && "$date" != "null" ]]; then
-                        # Extract just the date part (first 10 characters)
-                        date="${date:0:10}"
-                        if [[ -z "$earliest_date" || "$date" < "$earliest_date" ]]; then
-                            earliest_date="$date"
-                            # Determine if it's digital or physical
-                            if echo "$digital_dates" | grep -q "$date"; then
-                                release_type="Digital"
-                            else
-                                release_type="Physical"
-                            fi
-                        fi
-                    fi
-                done
-            fi
-            
-            # Determine status
-            local status=$(determine_status "$earliest_date")
-            
-            # Format date for display
-            local display_date="TBD"
-            if [[ -n "$earliest_date" ]]; then
-                display_date="$earliest_date"
-            fi
-            
-            echo -e "${GREEN}  ✓ $title - $release_type ($display_date) - $status${NC}"
-            
-            # Save to results file
-            echo "$title|$release_type|$display_date|$status|$poster_url|$overview|$tmdb_id" >> /tmp/movie_results.txt
-            
-        elif [[ "$media_type" == "tv" ]]; then
-            # For TV shows, get air date from details
-            echo -e "  Getting TV show details..."
-            
-            local tv_details=$(get_tv_show_details "$tmdb_id")
-            local first_air_date=""
-            local last_air_date=""
-            local status_text=""
-            
-            if [[ -n "$tv_details" && "$tv_details" != "null" ]]; then
-                first_air_date=$(echo "$tv_details" | jq -r '.first_air_date // ""')
-                last_air_date=$(echo "$tv_details" | jq -r '.last_air_date // ""')
-                status_text=$(echo "$tv_details" | jq -r '.status // ""')
-            fi
-            
-            # Determine TV show status
-            local tv_status="TBD"
-            local display_date="TBD"
-            local release_type="TV Series"
-            
-            if [[ -n "$first_air_date" && "$first_air_date" != "null" ]]; then
-                display_date="$first_air_date"
-                local current_date=$(date +%Y-%m-%d)
-                
-                if [[ "$first_air_date" < "$current_date" ]] || [[ "$first_air_date" == "$current_date" ]]; then
-                    if [[ "$status_text" == "Ended" || "$status_text" == "Canceled" ]]; then
-                        tv_status="Yes"
-                        release_type="TV Series (Ended)"
-                    else
-                        tv_status="Soon"
-                        release_type="TV Series (Ongoing)"
-                    fi
-                else
-                    tv_status="Soon"
-                    release_type="TV Series (Upcoming)"
-                fi
-            fi
-            
-            echo -e "${GREEN}  ✓ $title - $release_type ($display_date) - $tv_status${NC}"
-            
-            # Save to results file
-            echo "$title|$release_type|$display_date|$tv_status|$poster_url|$overview|$tmdb_id" >> /tmp/movie_results.txt
-        fi
-        
-        # Small delay to be nice to the API
-        sleep 0.1
-        
-    done < /tmp/ombi_requests.txt
-    
-    echo -e "${GREEN}Processing complete!${NC}"
-}
-
-# Parse command line arguments
-while getopts "i:o:t:l:u:b:h" opt; do
-    case $opt in
-        i) INPUT_FILE="$OPTARG" ;;
-        o) OUTPUT_FILE="$OPTARG" ;;
-        t) TMDB_BEARER_TOKEN="$OPTARG" ;;
-        l) HTML_LANGUAGE="$OPTARG" ;;
-        u) OMBI_SITE_URL="$OPTARG" ;;
-        b) CUSTOM_BACKGROUND_URL="$OPTARG" ;;
-        h) usage; exit 0 ;;
-        \?) echo "Invalid option -$OPTARG" >&2; usage; exit 1 ;;
-    esac
-done
-
-# Handle remaining arguments
-shift $((OPTIND-1))
-for arg in "$@"; do
-    case $arg in
-        --ombi)
-            USE_OMBI_DB="yes"
-            ;;
-        --include-tv)
-            INCLUDE_TV_SHOWS="yes"
-            ;;
-        --all-requests)
-            FILTER_UNAVAILABLE="no"
-            ;;
-        *)
-            echo -e "${RED}Unknown argument: $arg${NC}"
+    # If no arguments provided, use configuration defaults
+    if [[ $# -eq 0 ]]; then
+        if [[ "$USE_OMBI_DB" == "yes" && -n "$OMBI_DB_PATH" ]]; then
+            database_path="$OMBI_DB_PATH"
+            echo -e "${BLUE}Using database mode with config defaults${NC}"
+        elif [[ -n "$INPUT_FILE" ]]; then
+            input_file="$INPUT_FILE"
+            echo -e "${BLUE}Using file mode with config defaults${NC}"
+        else
+            echo -e "${RED}Error: No input source configured. Please set INPUT_FILE or OMBI_DB_PATH in the script configuration.${NC}"
             usage
             exit 1
-            ;;
-    esac
-done
-
-# Validate required arguments
-if [[ "$USE_OMBI_DB" == "yes" ]]; then
-    # For Ombi mode, only output file is required
-    if [[ -z "$OUTPUT_FILE" ]]; then
-        echo -e "${RED}Error: Output file is required${NC}"
+        fi
+    else
+        # Parse command line arguments
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                -f|--file)
+                    input_file="$2"
+                    shift 2
+                    ;;
+                -d|--database)
+                    database_path="$2"
+                    shift 2
+                    ;;
+                -o|--output)
+                    output_file="$2"
+                    shift 2
+                    ;;
+                -t|--include-tv)
+                    include_tv="yes"
+                    shift
+                    ;;
+                -u|--unavailable-only)
+                    filter_unavailable="yes"
+                    shift
+                    ;;
+                -c|--custom-dates)
+                    custom_dates_file="$2"
+                    shift 2
+                    ;;
+                -h|--help)
+                    usage
+                    exit 0
+                    ;;
+                *)
+                    echo -e "${RED}Error: Unknown option $1${NC}"
+                    usage
+                    exit 1
+                    ;;
+            esac
+        done
+    fi
+    
+    # Validate that we have either input file or database
+    if [[ -z "$input_file" && -z "$database_path" ]]; then
+        echo -e "${RED}Error: Either input file (-f) or database path (-d) must be specified${NC}"
         usage
         exit 1
     fi
-else
-    # For file mode, both input and output files are required
-    if [[ -z "$INPUT_FILE" || -z "$OUTPUT_FILE" ]]; then
-        echo -e "${RED}Error: Input file and output file are required${NC}"
-        usage
-        exit 1
+    
+    # Set default output file if not specified
+    if [[ -z "$output_file" ]]; then
+        output_file="movie_report.html"
     fi
-
-    # Check if input file exists
-    if [[ ! -f "$INPUT_FILE" ]]; then
-        echo -e "${RED}Error: Input file '$INPUT_FILE' not found${NC}"
-        exit 1
-    fi
-fi
-
-# Check if jq is available
-if ! command -v jq &> /dev/null; then
-    echo -e "${RED}Error: jq is required but not installed${NC}"
-    echo "Please install jq: https://stedolan.github.io/jq/download/"
-    exit 1
-fi
-
-# Check if curl is available
-if ! command -v curl &> /dev/null; then
-    echo -e "${RED}Error: curl is required but not installed${NC}"
-    exit 1
-fi
-
-main() {
-    echo -e "${BLUE}Starting Movie Downloadability Checker...${NC}"
-
+    
     # Check dependencies
     check_dependencies
-
-    # Validate TMDb token
-    if [[ -z "$TMDB_BEARER_TOKEN" || "$TMDB_BEARER_TOKEN" == "enterhere" ]]; then
-        echo -e "${RED}Error: Please set a valid TMDb Bearer Token${NC}"
-        exit 1
-    fi
-
-    # Create temporary directory
-    mkdir -p /tmp
-
-    # Clean up temporary files
-    rm -f /tmp/movie_results.txt /tmp/ombi_requests.txt
-
+    
+    # Load custom digital dates
+    load_custom_digital_dates
+    
+    # Create temporary directory for processing
+    local temp_dir="/tmp/ombicheck_$$"
+    mkdir -p "$temp_dir"
+    local results_file="$temp_dir/results.json"
+    
+    # Initialize results file
+    echo "[]" > "$results_file"
+    
     # Process movies
-    process_movies
-
-    # Check if we have results
-    if [[ ! -f /tmp/movie_results.txt ]] || [[ ! -s /tmp/movie_results.txt ]]; then
-        echo -e "${RED}No results to generate HTML report${NC}"
-        exit 1
+    local movies=()
+    
+    if [[ -n "$database_path" ]]; then
+        echo -e "${BLUE}Extracting movies from database: $database_path${NC}"
+        mapfile -t movies < <(extract_from_database "$database_path" "$include_tv" "$filter_unavailable")
+    else
+        echo -e "${BLUE}Reading movies from file: $input_file${NC}"
+        if [[ ! -f "$input_file" ]]; then
+            echo -e "${RED}Error: Input file not found: $input_file${NC}"
+            exit 1
+        fi
+        mapfile -t movies < "$input_file"
     fi
+    
+    if [[ ${#movies[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}No movies found to process${NC}"
+        exit 0
+    fi
+    
+    echo -e "${BLUE}Processing ${#movies[@]} movies...${NC}"
+    
+    # Process each movie
+    local processed_results=()
+    for movie in "${movies[@]}"; do
+        if [[ -n "$movie" ]]; then
+            echo -e "${YELLOW}➤ Processing: $movie${NC}"
+            local result
+            result=$(process_movie "$movie" "$custom_dates_file")
 
+            # Gebruik een here-string om echo-artefacten te vermijden
+            if jq empty <<< "$result" 2>/dev/null; then
+                processed_results+=("$result")
+            else
+                echo -e "${RED}⚠ Ongeldig JSON-result voor '$movie'. Overgeslagen.${NC}"
+                echo "$result"
+            fi
+        fi
+    done
+    
+    # Combine all results into JSON array
+    printf '%s\n' "${processed_results[@]}" | jq -s '.' > "$results_file"
+    
     # Generate HTML report
-    echo -e "${BLUE}Generating HTML report...${NC}"
-    generate_html
-
-    echo -e "${GREEN}HTML report generated: $OUTPUT_FILE${NC}"
-
-    # Clean up
-    rm -f /tmp/movie_results.txt /tmp/ombi_requests.txt
+    generate_html_report "$results_file" "$output_file"
+    
+    # Cleanup
+    rm -rf "$temp_dir"
+    
+    echo -e "${GREEN}Processing complete!${NC}"
+    echo -e "${BLUE}Results saved to: $output_file${NC}"
 }
 
-# Run main function
+# Run main function with all arguments
 main "$@"
-
-# Optional: Open the HTML file in default browser (uncomment if desired)
-# if command -v xdg-open &> /dev/null; then
-#     xdg-open "$OUTPUT_FILE"
-# elif command -v open &> /dev/null; then
-#     open "$OUTPUT_FILE"
-# fi
