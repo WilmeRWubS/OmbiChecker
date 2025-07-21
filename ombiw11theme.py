@@ -49,6 +49,13 @@ try:
 except ImportError:
     HAS_DARKDETECT = False
 
+def restyle_text_widget(text_widget):
+    theme = sv_ttk.get_theme()
+    if theme == "dark":
+        text_widget.configure(bg="#1e1e1e", fg="#ffffff", insertbackground="#ffffff")
+    else:
+        text_widget.configure(bg="#ffffff", fg="#000000", insertbackground="#000000")
+
 def apply_theme_to_titlebar(root):
     """Apply theme to Windows title bar if supported."""
     if not HAS_PYWINSTYLES or sys.platform != "win32":
@@ -965,8 +972,13 @@ def open_settings_window():
         current_theme = sv_ttk.get_theme()
         new_theme = "light" if current_theme == "dark" else "dark"
         sv_ttk.set_theme(new_theme)
+
         apply_theme_to_titlebar(window)
         apply_theme_to_titlebar(settings_window)
+
+        # Pas text widgets handmatig aan
+        restyle_text_widget(input_text)
+        restyle_text_widget(output_text)
     
     theme_btn = ttk.Button(theme_frame, text="Toggle Dark/Light Theme", command=toggle_theme)
     theme_btn.pack(pady=8)
@@ -1588,6 +1600,50 @@ def run_cli():
         except Exception as e:
             print(f"❌ Fout bij opslaan van HTML: {e}")
 
+def create_modern_scrolled_text(parent, height=10, width=80):
+    frame = ttk.Frame(parent)
+
+    # Create Text widget
+    text_widget = tk.Text(
+        frame,
+        height=height,
+        width=width,
+        wrap="word",
+        relief="solid",   # Zorg voor subtiele rand
+        bd=1,             # Randdikte
+        font=("Segoe UI", 10),
+        highlightthickness=0,
+        borderwidth=0
+    )
+
+    # Detect current sv_ttk theme
+    theme = sv_ttk.get_theme()
+    if theme == "dark":
+        text_widget.configure(
+            bg="#1e1e1e",       # Iets lichter dan achtergrond
+            fg="#ffffff",
+            insertbackground="#ffffff"
+        )
+    else:
+        text_widget.configure(
+            bg="#ffffff",
+            fg="#000000",
+            insertbackground="#000000"
+        )
+
+    # Create styled Scrollbar
+    scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text_widget.yview)
+    text_widget.configure(yscrollcommand=scrollbar.set)
+
+    # Layout
+    text_widget.grid(row=0, column=0, sticky="nsew")
+    scrollbar.grid(row=0, column=1, sticky="ns")
+
+    frame.grid_rowconfigure(0, weight=1)
+    frame.grid_columnconfigure(0, weight=1)
+
+    return frame, text_widget
+
 def main():
     global window, input_text, output_text, sort_var
 
@@ -1621,10 +1677,9 @@ def main():
     else:
         sv_ttk.set_theme("dark")  # Default to dark theme
     
-    tk.Label(window, text="Paste your tab-separated movie list below:").pack(anchor='w', padx=10, pady=(10, 0))
-    
-    input_text = scrolledtext.ScrolledText(window, height=15, width=110)
-    input_text.pack(padx=10, pady=5)
+    ttk.Label(window, text="Paste your tab-separated movie list below:").pack(anchor='w', padx=10, pady=(10, 0))
+    input_frame, input_text = create_modern_scrolled_text(window, height=15, width=110)
+    input_frame.pack(padx=10, pady=5)
     
     # Button and sort controls frame
     controls_frame = tk.Frame(window)
@@ -1651,8 +1706,9 @@ def main():
     ttk.Button(controls_frame, text="Settings", command=open_settings_window).pack(side=tk.LEFT)
     
     ttk.Label(window, text="Results:").pack(anchor='w', padx=10)
-    output_text = scrolledtext.ScrolledText(window, height=15, width=110, state=tk.DISABLED)
-    output_text.pack(padx=10, pady=5)
+    output_frame, output_text = create_modern_scrolled_text(window, height=15, width=110)
+    output_text.config(state=tk.DISABLED)
+    output_frame.pack(padx=10, pady=5)
     
     window.mainloop()
 
