@@ -93,7 +93,7 @@ def setup_selenium_driver():
         driver = webdriver.Chrome(options=chrome_options)
         return driver
     except Exception as e:
-        messagebox.showerror("WebDriver Error", 
+        show_custom_info("WebDriver Error", 
                            f"Failed to initialize Chrome WebDriver. Please ensure Chrome and ChromeDriver are installed.\n\nError: {str(e)}")
         return None
 
@@ -780,11 +780,11 @@ def load_from_ombi_db():
         pending_lines = get_pending_requests(conn)
         conn.close()
     except Exception as e:
-        messagebox.showerror("Database Error", f"Cannot open or read Ombi database:\n{str(e)}")
+        show_custom_info("Database Error", f"Cannot open or read Ombi database:\n{str(e)}")
         return
 
     if not pending_lines:
-        messagebox.showinfo("No Requests", "There are no pending movie requests in Ombi.")
+        show_custom_info("No Requests", "There are no pending movie requests in Ombi.")
     else:
         input_text.delete("1.0", tk.END)
         input_text.insert(tk.END, "\n".join(pending_lines))
@@ -942,7 +942,7 @@ def open_settings_window():
         try:
             webbrowser.open("https://www.themoviedb.org/settings/api")
         except Exception as e:
-            messagebox.showerror("Error", f"Could not open browser: {str(e)}")
+            show_custom_info("Error", f"Could not open browser: {str(e)}")
     
     get_token_btn = ttk.Button(token_frame, text="Get Token", command=open_tmdb_api_page, width=12)
     get_token_btn.grid(row=0, column=2, sticky="e")
@@ -1051,7 +1051,7 @@ def open_settings_window():
         # Validate TMDb token
         new_token = tmdb_token_var.get().strip()
         if not new_token:
-            messagebox.showerror("Error", "TMDb Bearer Token is required!")
+            show_custom_info("Error", "TMDb Bearer Token is required!")
             return
         
         # Update global variables
@@ -1067,7 +1067,7 @@ def open_settings_window():
             "accept": "application/json"
         }
         
-        messagebox.showinfo("Settings Saved", "Settings have been saved successfully!")
+        show_custom_info("Settings Saved", "Settings have been saved successfully!")
         settings_window.destroy()
     
     def cancel_settings():
@@ -1080,7 +1080,7 @@ def open_settings_window():
 def generate_html_report():
     """Generate an HTML report with movie posters and download status."""
     if not movie_results:
-        messagebox.showwarning("No Data", "Please check movies first before generating HTML report.")
+        show_custom_info("No Data", "Please check movies first before generating HTML report.")
         return
     
     # Ask user where to save the HTML file
@@ -1099,9 +1099,9 @@ def generate_html_report():
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
-        messagebox.showinfo("Success", f"HTML report saved to:\n{file_path}")
+        show_custom_info("Success", f"HTML report saved to:\n{file_path}")
     except Exception as e:
-        messagebox.showerror("Error", f"Failed to save HTML report:\n{str(e)}")
+        show_custom_info("Error", f"Failed to save HTML report:\n{str(e)}")
 
 def generate_html_content():
     """Generate the HTML content for the movie report."""
@@ -1656,6 +1656,37 @@ def create_modern_scrolled_text(parent, height=10, width=80):
 
     return outer, text_widget
 
+def show_custom_info(title, message):
+    popup = tk.Toplevel(window)
+    popup.title(title)
+    popup.resizable(False, False)
+
+    # Forceer actief theme opnieuw toepassen
+    current_theme = sv_ttk.get_theme()
+    sv_ttk.set_theme(current_theme)
+
+    # Venster eigenschappen
+    popup.transient(window)
+    popup.grab_set()
+    popup.geometry("400x150")
+    popup.update_idletasks()
+
+    # Centeren op scherm
+    x = (popup.winfo_screenwidth() // 2) - 200
+    y = (popup.winfo_screenheight() // 2) - 75
+    popup.geometry(f"+{x}+{y}")
+
+    # Frame styling
+    frame = ttk.Frame(popup, padding=20)
+    frame.pack(expand=True, fill="both")
+
+    ttk.Label(frame, text=message, wraplength=360).pack(pady=(0, 20))
+    ttk.Button(frame, text="OK", command=popup.destroy).pack()
+
+    # 💡 Pas titelbalk aan voor Windows 11 dark mode
+    popup.update_idletasks()
+    apply_theme_to_titlebar(popup)
+
 def main():
     global window, input_text, output_text, sort_var
 
@@ -1702,28 +1733,23 @@ def main():
     input_frame.pack(padx=10, pady=5)
     
     # Button and sort controls frame
-    controls_frame = tk.Frame(window)
+    controls_frame = ttk.Frame(window)
     controls_frame.pack(pady=10)
-    
-    ttk.Button(controls_frame, text="Check Availability", command=check_movies).pack(side=tk.LEFT, padx=(0, 20))
-    
-    # Sort controls
-    ttk.Label(controls_frame, text="Sort by:").pack(side=tk.LEFT, padx=(0, 5))
+
+    # Kolommen netjes centreren in grid
+    controls_frame.columnconfigure((0,1,2,3,4,5,6), weight=1)
+
+    ttk.Button(controls_frame, text="Check Availability", command=check_movies).grid(row=0, column=0, padx=5)
+    ttk.Label(controls_frame, text="Sort by:").grid(row=0, column=1, padx=5)
     sort_var = tk.StringVar(value="Title")
-    sort_dropdown = ttk.Combobox(controls_frame, textvariable=sort_var, 
-                                values=["Title", "Theater Date", "Digital Date", "Status"],
-                                state="readonly", width=15)
-    sort_dropdown.pack(side=tk.LEFT, padx=(0, 10))
-    ttk.Button(controls_frame, text="Sort", command=sort_results).pack(side=tk.LEFT, padx=(0, 20))
-    
-    # HTML Export button
-    ttk.Button(controls_frame, text="Generate HTML Report", command=generate_html_report).pack(side=tk.LEFT, padx=(0, 10))
-    
-    # Load from Ombi DB button
-    ttk.Button(controls_frame, text="Load from Ombi DB", command=load_from_ombi_db).pack(side=tk.LEFT, padx=(0, 10))
-    
-    # Settings button
-    ttk.Button(controls_frame, text="Settings", command=open_settings_window).pack(side=tk.LEFT)
+    sort_dropdown = ttk.Combobox(controls_frame, textvariable=sort_var,
+                                 values=["Title", "Theater Date", "Digital Date", "Status"],
+                                 state="readonly", width=15)
+    sort_dropdown.grid(row=0, column=2, padx=5)
+    ttk.Button(controls_frame, text="Sort", command=sort_results).grid(row=0, column=3, padx=5)
+    ttk.Button(controls_frame, text="Generate HTML Report", command=generate_html_report).grid(row=0, column=4, padx=5)
+    ttk.Button(controls_frame, text="Load from Ombi DB", command=load_from_ombi_db).grid(row=0, column=5, padx=5)
+    ttk.Button(controls_frame, text="Settings", command=open_settings_window).grid(row=0, column=6, padx=5)
     
     ttk.Label(window, text="Results:").pack(anchor='w', padx=10)
     output_frame, output_text = create_modern_scrolled_text(window, height=15, width=110)
