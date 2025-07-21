@@ -57,22 +57,27 @@ def restyle_text_widget(text_widget):
         text_widget.configure(bg="#ffffff", fg="#000000", insertbackground="#000000")
 
 def apply_theme_to_titlebar(root):
-    """Apply theme to Windows title bar if supported."""
+    """Apply Windows 10/11 styled titlebar color via pywinstyles."""
     if not HAS_PYWINSTYLES or sys.platform != "win32":
         return
-    
+
     try:
         version = sys.getwindowsversion()
+        current_theme = sv_ttk.get_theme()
+
         if version.major == 10 and version.build >= 22000:
-            # Windows 11
-            pywinstyles.change_header_color(root, "#1c1c1c" if sv_ttk.get_theme() == "dark" else "#fafafa")
+            # Windows 11: moderne kleur
+            if current_theme == "dark":
+                pywinstyles.change_header_color(root, "#1c1c1c")
+            else:
+                pywinstyles.change_header_color(root, "#fafafa")
         elif version.major == 10:
-            # Windows 10
-            pywinstyles.apply_style(root, "dark" if sv_ttk.get_theme() == "dark" else "normal")
+            # Windows 10: klassiek thema
+            pywinstyles.apply_style(root, "dark" if current_theme == "dark" else "normal")
             root.wm_attributes("-alpha", 0.99)
             root.wm_attributes("-alpha", 1)
-    except Exception:
-        pass  # Silently fail if title bar theming doesn't work
+    except Exception as e:
+        print(f"⚠️ Titelbalk-styling mislukt: {e}")
 
 def setup_selenium_driver():
     """Setup Chrome driver for web scraping."""
@@ -880,9 +885,8 @@ def open_settings_window():
     settings_window.title("Settings")
     settings_window.geometry("600x580")
     settings_window.resizable(False, False)
-    
-    # Apply theme to settings window
-    apply_theme_to_titlebar(settings_window)
+
+    sv_ttk.set_theme(sv_ttk.get_theme())
     
     # Make window modal
     settings_window.transient(window)
@@ -920,6 +924,8 @@ def open_settings_window():
     
     tmdb_token_entry = ttk.Entry(token_frame, textvariable=tmdb_token_var, show="*", width=1)
     tmdb_token_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+    apply_theme_to_titlebar(settings_window)
     
     def toggle_token_visibility():
         if tmdb_token_entry.cget('show') == '*':
