@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 import webbrowser
 import time
+import sqlite3
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -48,6 +49,55 @@ def setup_selenium_driver():
         messagebox.showerror("WebDriver Error", 
                            f"Failed to initialize Chrome WebDriver. Please ensure Chrome and ChromeDriver are installed.\n\nError: {str(e)}")
         return None
+
+def connect_db(db_path="ombi.db"):
+    return sqlite3.connect(db_path)
+
+def get_pending_requests(conn):
+    cursor = conn.cursor()
+
+    # Haal gebruikers op
+    cursor.execute("SELECT Id, UserName FROM AspNetUsers")
+    user_map = {row[0]: row[1] for row in cursor.fetchall()}
+
+    cursor.execute("""
+        SELECT Title, ReleaseDate, Status, RequestedDate, RequestedUserId, Approved, Available
+        FROM MovieRequests
+        WHERE Approved = 0 AND (Available = 0 OR Available IS NULL)
+        ORDER BY ReleaseDate ASC
+    """)
+
+    output = []
+    for title, release, status, req_date, user_id, approved, available in cursor.fetchall():
+        username = user_map.get(user_id, "Onbekend")
+
+        # Status vertaling
+        status_nl = {
+            "Released": "Uitgebracht",
+            "Post Production": "Postproductie"
+        }.get(status, status)
+
+        # Format release
+        if release and "0001" not in release:
+            try:
+                release_fmt = datetime.strptime(release.split(" ")[0], "%Y-%m-%d").strftime("(%m/%d/%Y)")
+            except:
+                release_fmt = "(?)"
+        else:
+            release_fmt = "(?)"
+
+        # Format aanvraagdatum
+        if req_date and "0001" not in req_date:
+            try:
+                req_fmt = datetime.strptime(req_date.split(" ")[0], "%Y-%m-%d").strftime("%b %d, %Y")
+            except:
+                req_fmt = "-"
+        else:
+            req_fmt = "-"
+
+        output.append(f"{title} {release_fmt}\t{username}\t{status_nl}\tWacht op goedkeuring\t{req_fmt}")
+
+    return output
 
 def standardize_date(date_str):
     """Convert various date formats to YYYY-MM-DD format with improved parsing."""
@@ -687,6 +737,21 @@ def sort_results():
         sorted_results = movie_results
     
     display_results(sorted_results)
+
+def load_from_ombi_db():
+    try:
+        conn = connect_db()
+        pending_lines = get_pending_requests(conn)
+        conn.close()
+    except Exception as e:
+        messagebox.showerror("Databasefout", f"Kan Ombi-database niet openen of lezen:\n{str(e)}")
+        return
+
+    if not pending_lines:
+        messagebox.showinfo("Geen verzoeken", "Er zijn geen openstaande filmverzoeken in Ombi.")
+    else:
+        input_text.delete("1.0", tk.END)
+        input_text.insert(tk.END, "\n".join(pending_lines))
 
 def check_movies():
     global movie_results
@@ -1414,6 +1479,8 @@ tk.Button(controls_frame, text="Sort", command=sort_results).pack(side=tk.LEFT, 
 # HTML Export button
 tk.Button(controls_frame, text="Generate HTML Report", command=generate_html_report, 
           bg="#007bff", fg="white", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+
+tk.Button(controls_frame, text="Load from Ombi DB", command=load_from_ombi_db).pack(side=tk.LEFT, padx=(0, 20))
 
 # Settings button
 tk.Button(controls_frame, text="Settings", command=open_settings_window, 
