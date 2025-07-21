@@ -1590,11 +1590,28 @@ def run_cli():
 
 def main():
     global window, input_text, output_text, sort_var
-    
+
+    # Detect system theme first
+    theme_to_apply = "dark"  # default fallback
+    if HAS_DARKDETECT:
+        theme_to_apply = "dark" if darkdetect.isDark() else "light"
+
     # Create the main window
     window = tk.Tk()
     window.title("Movie Downloadability Checker (Proper Release)")
     window.geometry("900x650")
+
+    # Apply theme early
+    sv_ttk.set_theme(theme_to_apply)
+    apply_theme_to_titlebar(window)
+    
+    # Apply theme if available
+    if HAS_DARKDETECT and HAS_PYWINSTYLES:
+        system_theme = "dark" if darkdetect.isDark() else "light"
+        sv_ttk.set_theme(system_theme)
+        apply_theme_to_titlebar(window)
+    else:
+        sv_ttk.set_theme("dark")  # Default to dark theme
     
     # Apply theme if available
     if HAS_DARKDETECT and HAS_PYWINSTYLES:
