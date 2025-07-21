@@ -983,6 +983,13 @@ def open_settings_window():
         new_theme = "light" if current_theme == "dark" else "dark"
         sv_ttk.set_theme(new_theme)
 
+        # Update text frame style bij themawissel
+        style = ttk.Style()
+        style.configure(
+            "TextWrapper.TFrame",
+            background="#3c3c3c" if sv_ttk.get_theme() == "dark" else "#d0d0d0"
+        )
+
         apply_theme_to_titlebar(window)
         apply_theme_to_titlebar(settings_window)
 
@@ -1616,48 +1623,38 @@ def run_cli():
             print(f"❌ Fout bij opslaan van HTML: {e}")
 
 def create_modern_scrolled_text(parent, height=10, width=80):
-    frame = ttk.Frame(parent)
-
-    # Create Text widget
+    outer = ttk.Frame(parent, padding=1, style="TextWrapper.TFrame")
+    
+    frame = ttk.Frame(outer)
     text_widget = tk.Text(
         frame,
         height=height,
         width=width,
         wrap="word",
-        relief="solid",   # Zorg voor subtiele rand
-        bd=1,             # Randdikte
+        relief="flat",
         font=("Segoe UI", 10),
         highlightthickness=0,
         borderwidth=0
     )
 
-    # Detect current sv_ttk theme
+    # Themekleur bepalen
     theme = sv_ttk.get_theme()
     if theme == "dark":
-        text_widget.configure(
-            bg="#1e1e1e",       # Iets lichter dan achtergrond
-            fg="#ffffff",
-            insertbackground="#ffffff"
-        )
+        text_widget.configure(bg="#1e1e1e", fg="#ffffff", insertbackground="#ffffff")
     else:
-        text_widget.configure(
-            bg="#ffffff",
-            fg="#000000",
-            insertbackground="#000000"
-        )
+        text_widget.configure(bg="#ffffff", fg="#000000", insertbackground="#000000")
 
-    # Create styled Scrollbar
     scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text_widget.yview)
     text_widget.configure(yscrollcommand=scrollbar.set)
 
-    # Layout
     text_widget.grid(row=0, column=0, sticky="nsew")
     scrollbar.grid(row=0, column=1, sticky="ns")
 
     frame.grid_rowconfigure(0, weight=1)
     frame.grid_columnconfigure(0, weight=1)
+    frame.pack(fill="both", expand=True)
 
-    return frame, text_widget
+    return outer, text_widget
 
 def main():
     global window, input_text, output_text, sort_var
@@ -1675,6 +1672,14 @@ def main():
     # Apply theme early
     sv_ttk.set_theme(theme_to_apply)
     apply_theme_to_titlebar(window)
+
+    style = ttk.Style()
+    style.configure(
+        "TextWrapper.TFrame",
+        borderwidth=1,
+        relief="solid",
+        background="#3c3c3c" if sv_ttk.get_theme() == "dark" else "#d0d0d0"
+    )
     
     # Apply theme if available
     if HAS_DARKDETECT and HAS_PYWINSTYLES:
