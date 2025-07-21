@@ -918,7 +918,7 @@ def open_settings_window():
     token_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
     token_frame.columnconfigure(0, weight=1)
     
-    tmdb_token_entry = ttk.Entry(token_frame, textvariable=tmdb_token_var, show="*", width=50)
+    tmdb_token_entry = ttk.Entry(token_frame, textvariable=tmdb_token_var, show="*", width=1)
     tmdb_token_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
     
     def toggle_token_visibility():
@@ -930,7 +930,7 @@ def open_settings_window():
             show_token_btn.config(text="Show")
     
     show_token_btn = ttk.Button(token_frame, text="Show", command=toggle_token_visibility, width=8)
-    show_token_btn.grid(row=0, column=1, padx=(0, 8))
+    show_token_btn.grid(row=0, column=1, padx=(0, 8), sticky="e")
     
     def open_tmdb_api_page():
         try:
@@ -939,7 +939,11 @@ def open_settings_window():
             messagebox.showerror("Error", f"Could not open browser: {str(e)}")
     
     get_token_btn = ttk.Button(token_frame, text="Get Token", command=open_tmdb_api_page, width=12)
-    get_token_btn.grid(row=0, column=2)
+    get_token_btn.grid(row=0, column=2, sticky="e")
+
+    token_frame.columnconfigure(0, weight=1)
+    token_frame.columnconfigure(1, weight=0)
+    token_frame.columnconfigure(2, weight=0)
     
     ttk.Label(tmdb_frame, text="Click 'Get Token' to open TMDb API settings in your browser", 
               foreground="gray").grid(row=2, column=0, sticky="w", pady=(4, 0))
@@ -979,6 +983,11 @@ def open_settings_window():
         # Pas text widgets handmatig aan
         restyle_text_widget(input_text)
         restyle_text_widget(output_text)
+
+        default_font = ("Segoe UI", 10)
+
+        input_text.configure(font=default_font)
+        output_text.configure(font=default_font)
     
     theme_btn = ttk.Button(theme_frame, text="Toggle Dark/Light Theme", command=toggle_theme)
     theme_btn.pack(pady=8)
