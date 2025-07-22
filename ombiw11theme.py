@@ -739,20 +739,16 @@ def extract_title(line):
     return line.split('\t')[0].strip()
 
 def display_results(results):
-    """Display the results in the output text widget with both theatrical and digital dates."""
-    output_text.config(state=tk.NORMAL)
-    output_text.delete("1.0", tk.END)
-    
-    output_text.insert(tk.END, f"{'Title':<40} | {'Theater Date':<12} | {'Digital Date':<12} | {'Status':<12}\n")
-    output_text.insert(tk.END, "-" * 85 + "\n")
-    
+    for row in result_tree.get_children():
+        result_tree.delete(row)
+
     for result in results:
         theater_date = result.get('theater_date', 'TBD') or 'TBD'
         digital_date = result.get('digital_date', 'TBD') or 'TBD'
-        
-        output_text.insert(tk.END, f"{result['title']:<40} | {theater_date:<12} | {digital_date:<12} | {result['status']:<12}\n")
-    
-    output_text.config(state=tk.DISABLED)
+        status = result.get('status', 'TBD') or 'TBD'
+        title = result.get('title', '—')
+
+        result_tree.insert('', 'end', values=(title, theater_date, digital_date, status))
 
 def sort_results():
     """Sort movie results based on selected criteria."""
@@ -793,11 +789,7 @@ def check_movies():
     global movie_results
     movie_results = []
     
-    output_text.config(state=tk.NORMAL)
-    output_text.delete("1.0", tk.END)
-    output_text.insert(tk.END, "Initializing web browser...\n")
-    output_text.config(state=tk.DISABLED)
-    output_text.update()
+    window.title("Checking movies... please wait")
     
     # Setup Selenium driver
     driver = setup_selenium_driver()
@@ -808,9 +800,7 @@ def check_movies():
         lines = input_text.get("1.0", tk.END).strip().split('\n')
         
         if not lines:
-            output_text.config(state=tk.NORMAL)
-            output_text.insert(tk.END, "Please paste some movie data.\n")
-            output_text.config(state=tk.DISABLED)
+            window.title("Paste movies that need checking.")
             return
         
         total_movies = len([line for line in lines if extract_title(line)])
@@ -824,11 +814,7 @@ def check_movies():
             current_movie += 1
             
             # Update progress
-            output_text.config(state=tk.NORMAL)
-            output_text.delete("1.0", tk.END)
-            output_text.insert(tk.END, f"Processing movie {current_movie}/{total_movies}: {title}\n")
-            output_text.config(state=tk.DISABLED)
-            output_text.update()
+            window.title(f"Checking {current_movie}/{total_movies}: {title}")
             
             # Search Vuniper for release info
             vuniper_info = search_movie_vuniper(title, driver)
@@ -1702,6 +1688,13 @@ def main():
 
     # Apply theme early
     sv_ttk.set_theme(theme_to_apply)
+
+    style = ttk.Style()
+    style.configure("Treeview",
+                    rowheight=25,
+                    font=("Segoe UI", 10))
+    style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
+
     apply_theme_to_titlebar(window)
 
     style = ttk.Style()
@@ -1751,10 +1744,29 @@ def main():
     ttk.Button(controls_frame, text="Load from Ombi DB", command=load_from_ombi_db).grid(row=0, column=5, padx=5)
     ttk.Button(controls_frame, text="Settings", command=open_settings_window).grid(row=0, column=6, padx=5)
     
-    ttk.Label(window, text="Results:").pack(anchor='w', padx=10)
-    output_frame, output_text = create_modern_scrolled_text(window, height=15, width=110)
-    output_text.config(state=tk.DISABLED)
-    output_frame.pack(padx=10, pady=5)
+    ttk.Label(window, text="Results:").pack(anchor='w', padx=10, pady=(10, 0))
+
+    tree_frame = ttk.Frame(window)
+    tree_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+
+    columns = ("Title", "Theater Date", "Digital Date", "Status")
+
+    global result_tree
+    result_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=15)
+
+    # Configure column headers and layout
+    for col in columns:
+        result_tree.heading(col, text=col)
+        result_tree.column(col, anchor="w", width=180)
+
+    # Add vertical scrollbar
+    scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=result_tree.yview)
+    result_tree.configure(yscrollcommand=scrollbar.set)
+
+    result_tree.grid(row=0, column=0, sticky="nsew")
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    tree_frame.grid_rowconfigure(0, weight=1)
+    tree_frame.grid_columnconfigure(0, weight=1)
     
     window.mainloop()
 
