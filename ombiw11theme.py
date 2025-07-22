@@ -981,12 +981,10 @@ def open_settings_window():
 
         # Pas text widgets handmatig aan
         restyle_text_widget(input_text)
-        restyle_text_widget(output_text)
 
         default_font = ("Segoe UI", 10)
 
         input_text.configure(font=default_font)
-        output_text.configure(font=default_font)
     
     theme_btn = ttk.Button(theme_frame, text="Toggle Dark/Light Theme", command=toggle_theme)
     theme_btn.pack(pady=8)
