@@ -1,7 +1,11 @@
 # 🎬 Movie Downloadability Checker
 
 Check if movies are officially released on digital or physical platforms using TMDb and Vuniper. Includes a GUI for manual checks and a CLI for automation.  
-<img width="1495" height="695" alt="ombicheck py" src="https://github.com/user-attachments/assets/286b3a56-7883-4b68-b929-b20c92f419b4" />
+<img width="1495" height="695" alt="ombicheck py" src="https://github.com/user-attachments/assets/286b3a56-7883-4b68-b929-b20c92f419b4" />  
+
+Includes a more advanced GUI styled after Windows 11 using [`Sun Valley ttk theme`](https://github.com/rdbende/Sun-Valley-ttk-theme).  
+Supports both `dark` and `light` mode.
+<img width="1517" height="696" alt="Windows 11 Style GUI" src="https://github.com/user-attachments/assets/4a72ef8b-4bcc-4b44-a41d-84a38ca2bd4c" />
 
 ---
 
