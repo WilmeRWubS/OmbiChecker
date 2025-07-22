@@ -1609,38 +1609,42 @@ def run_cli():
             print(f"❌ Fout bij opslaan van HTML: {e}")
 
 def create_modern_scrolled_text(parent, height=10, width=80):
-    outer = ttk.Frame(parent, padding=1, style="TextWrapper.TFrame")
-    
-    frame = ttk.Frame(outer)
+    style = ttk.Style()
+
+    wrapper = ttk.Frame(parent, padding=0, style="TextWrapper.TFrame")
+
+    text_frame = ttk.Frame(wrapper)
+    text_frame.pack(fill="both", expand=True)
+
     text_widget = tk.Text(
-        frame,
+        text_frame,
         height=height,
         width=width,
         wrap="word",
-        relief="flat",
+        relief="solid",
         font=("Segoe UI", 10),
-        highlightthickness=0,
+        highlightthickness=1,
+        highlightbackground="#444444" if sv_ttk.get_theme() == "dark" else "#cccccc",
+        highlightcolor="#444444" if sv_ttk.get_theme() == "dark" else "#cccccc",
         borderwidth=0
     )
 
-    # Themekleur bepalen
-    theme = sv_ttk.get_theme()
-    if theme == "dark":
-        text_widget.configure(bg="#1e1e1e", fg="#ffffff", insertbackground="#ffffff")
-    else:
-        text_widget.configure(bg="#ffffff", fg="#000000", insertbackground="#000000")
+    bg_color = style.lookup("Treeview", "background")
+    fg_color = "#ffffff" if sv_ttk.get_theme() == "dark" else "#000000"
+    insert_color = fg_color
 
-    scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text_widget.yview)
+    text_widget.configure(bg=bg_color, fg=fg_color, insertbackground=insert_color)
+
+    scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
     text_widget.configure(yscrollcommand=scrollbar.set)
 
-    text_widget.grid(row=0, column=0, sticky="nsew")
+    text_widget.grid(row=0, column=0, sticky="nsew", padx=8, pady=6)
     scrollbar.grid(row=0, column=1, sticky="ns")
 
-    frame.grid_rowconfigure(0, weight=1)
-    frame.grid_columnconfigure(0, weight=1)
-    frame.pack(fill="both", expand=True)
+    text_frame.grid_rowconfigure(0, weight=1)
+    text_frame.grid_columnconfigure(0, weight=1)
 
-    return outer, text_widget
+    return wrapper, text_widget
 
 def show_custom_info(title, message):
     popup = tk.Toplevel(window)
@@ -1690,6 +1694,8 @@ def main():
     sv_ttk.set_theme(theme_to_apply)
 
     style = ttk.Style()
+
+    style = ttk.Style()
     style.configure("Treeview",
                     rowheight=25,
                     font=("Segoe UI", 10))
@@ -1700,18 +1706,12 @@ def main():
     style = ttk.Style()
     style.configure(
         "TextWrapper.TFrame",
+        background=style.lookup("Treeview", "background"),
         borderwidth=1,
-        relief="solid",
-        background="#3c3c3c" if sv_ttk.get_theme() == "dark" else "#d0d0d0"
+        relief="solid"
     )
-    
-    # Apply theme if available
-    if HAS_DARKDETECT and HAS_PYWINSTYLES:
-        system_theme = "dark" if darkdetect.isDark() else "light"
-        sv_ttk.set_theme(system_theme)
-        apply_theme_to_titlebar(window)
-    else:
-        sv_ttk.set_theme("dark")  # Default to dark theme
+
+    style.map("TextWrapper.TFrame", background=[("active", style.lookup("Treeview", "background"))])
     
     # Apply theme if available
     if HAS_DARKDETECT and HAS_PYWINSTYLES:
@@ -1723,7 +1723,7 @@ def main():
     
     ttk.Label(window, text="Paste your tab-separated movie list below:").pack(anchor='w', padx=10, pady=(10, 0))
     input_frame, input_text = create_modern_scrolled_text(window, height=15, width=110)
-    input_frame.pack(padx=10, pady=5)
+    input_frame.pack(padx=10, pady=(10, 15), fill="both", expand=False)
     
     # Button and sort controls frame
     controls_frame = ttk.Frame(window)
