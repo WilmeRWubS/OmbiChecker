@@ -1604,14 +1604,31 @@ def run_cli():
             title = extract_title(line)
             print(f"[{idx}/{len(lines)}] Verwerk: {title}")
             
-            vuniper_info = search_movie_vuniper(title, driver, custom_dates)
+            # Extract expected year
+            expected_year = None
+            year_match = re.search(r'\((\d{4})\)', title)
+            if year_match:
+                expected_year = int(year_match.group(1))
+            else:
+                # Fallback: zoek naar een jaartal ergens in de regel
+                year_match = re.search(r'(\d{4})', line)
+                if year_match:
+                    potential_year = int(year_match.group(1))
+                    if 1900 <= potential_year <= 2035:
+                        expected_year = potential_year
+
+            vuniper_info = search_movie_vuniper(title, driver, custom_dates, expected_year=expected_year)
             tmdb_data = search_movie_tmdb(title)
 
             result = {
                 "title": title,
                 "theater_date": vuniper_info.get("theater_date") if vuniper_info else "TBD",
                 "digital_date": vuniper_info.get("digital_date") if vuniper_info else "TBD",
-                "status": determine_downloadable_status(vuniper_info),
+                "status": determine_downloadable_status(
+                    vuniper_info,
+                    vuniper_info.get("theater_date") if vuniper_info else None,
+                    vuniper_info.get("digital_date") if vuniper_info else None
+                ),
                 "poster_url": "",
                 "overview": "Geen beschrijving beschikbaar.",
                 "movie_id": tmdb_data.get("id") if tmdb_data else None,
