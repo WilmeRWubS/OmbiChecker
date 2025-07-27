@@ -1,0 +1,31 @@
+name: GitGuardian Secret Scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  scan-secrets:
+    runs-on: ubuntu-latest
+    name: Scan for secrets with ggshield
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install ggshield
+        run: pip install --upgrade ggshield
+
+      - name: Run ggshield scan
+        env:
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+        run: ggshield secret scan repo . --verbose
