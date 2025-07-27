@@ -176,8 +176,8 @@ def standardize_date(date_str):
         print(f"Error parsing date '{date_str}': {str(e)}")
         return None
 
-def search_movie_vuniper(title, driver, custom_dates=None):
-    """Search for a movie on Vuniper.com and get release information with improved search."""
+def search_movie_vuniper(title, driver, custom_dates=None, expected_year=None):
+    """Search for a movie on Vuniper.com and get release information with improved search and year matching."""
     try:
         driver.get("https://vuniper.com")
         time.sleep(2)
@@ -186,40 +186,50 @@ def search_movie_vuniper(title, driver, custom_dates=None):
         if not custom_dates:
             custom_dates = load_custom_digital_dates()
         
+        # Extract year from title if present and not provided separately
+        title_year = None
+        clean_title = title
+        
+        # Check if title contains a year in parentheses like "Movie Title (2025)"
+        year_match = re.search(r'\((\d{4})\)', title)
+        if year_match:
+            title_year = int(year_match.group(1))
+            clean_title = re.sub(r'\s*\(\d{4}\)', '', title).strip()
+        
+        # Use expected_year if provided, otherwise use extracted year
+        target_year = expected_year or title_year
+        
         # Create comprehensive search variations
         search_variations = []
         
+        # Use clean title for variations
+        base_title = clean_title
+        
         # Original title variations
         search_variations.extend([
-            title,  # Original title
-            title.replace(":", ""),  # Remove colons
-            title.replace(":", " "),  # Replace colons with spaces
+            base_title,  # Original title
+            base_title.replace(":", ""),  # Remove colons
+            base_title.replace(":", " "),  # Replace colons with spaces
         ])
         
         # Handle subtitle variations (before colon)
-        if ":" in title:
-            main_title = title.split(":")[0].strip()
+        if ":" in base_title:
+            main_title = base_title.split(":")[0].strip()
             search_variations.append(main_title)
         
         # Handle "The" prefix variations
-        if title.startswith("The "):
-            search_variations.append(title.replace("The ", "").strip())
+        if base_title.startswith("The "):
+            search_variations.append(base_title.replace("The ", "").strip())
         else:
-            search_variations.append(f"The {title}")
+            search_variations.append(f"The {base_title}")
         
         # Handle "Movie" suffix variations
-        if " Movie" in title:
-            search_variations.append(title.replace(" Movie", "").strip())
-            search_variations.append(title.replace(" The Movie", "").strip())
-        
-        # Add year to help with specificity
-        search_variations.extend([
-            f"{title} 2025",
-            f"{title.replace('The ', '').strip()} 2025" if title.startswith("The ") else f"The {title} 2025"
-        ])
+        if " Movie" in base_title:
+            search_variations.append(base_title.replace(" Movie", "").strip())
+            search_variations.append(base_title.replace(" The Movie", "").strip())
         
         # Individual word search for difficult cases
-        words = title.split()
+        words = base_title.split()
         # Filter out common words that don't help with search
         skip_words = {'the', 'a', 'an', 'and', 'or', 'but', 'movie', 'film'}
         important_words = [word for word in words if word.lower() not in skip_words and len(word) > 2]
@@ -228,15 +238,14 @@ def search_movie_vuniper(title, driver, custom_dates=None):
             # Try combinations of important words
             if len(important_words) >= 2:
                 search_variations.append(f"{important_words[0]} {important_words[1]}")
-                search_variations.append(f"{important_words[0]} {important_words[1]} 2025")
             
-            # Try just the first important word with 2025
-            search_variations.append(f"{important_words[0]} 2025")
+            # Try just the first important word
+            search_variations.append(important_words[0])
         
         # Remove duplicates while preserving order
         search_variations = list(dict.fromkeys(search_variations))
         
-        print(f"Search variations for '{title}': {search_variations}")
+        print(f"Search variations for '{title}' (target year: {target_year}): {search_variations}")
         
         vuniper_info = None
         vuniper_url = None
@@ -255,48 +264,65 @@ def search_movie_vuniper(title, driver, custom_dates=None):
                 suggestions = driver.find_elements(By.CSS_SELECTOR, ".search-suggestion")
                 
                 if suggestions:
-                    # Look for the best match
+                    # Look for the best match with year consideration
                     best_suggestion = None
+                    best_score = -1
                     
-                    # Priority 1: Exact match with 2025
                     for suggestion in suggestions:
-                        suggestion_text = suggestion.text.lower()
-                        if "2025" in suggestion_text and any(word.lower() in suggestion_text for word in important_words if important_words):
+                        suggestion_text = suggestion.text.strip()
+                        print(f"Evaluating suggestion: '{suggestion_text}'")
+                        
+                        # Extract year from suggestion text
+                        suggestion_year = None
+                        year_match = re.search(r'(\d{4})', suggestion_text)
+                        if year_match:
+                            suggestion_year = int(year_match.group(1))
+                        
+                        # Calculate match score
+                        score = 0
+                        suggestion_lower = suggestion_text.lower()
+                        
+                        # Check if this is a "no results" message
+                        if any(phrase in suggestion_lower for phrase in ['no results', 'searched movies', 'view results']):
+                            print(f"Skipping 'no results' suggestion: {suggestion_text}")
+                            continue
+                        
+                        # Year matching (highest priority)
+                        if target_year and suggestion_year:
+                            if suggestion_year == target_year:
+                                score += 1000  # Exact year match gets highest priority
+                                print(f"Exact year match: {suggestion_year}")
+                            elif abs(suggestion_year - target_year) <= 1:
+                                score += 500  # Close year match
+                                print(f"Close year match: {suggestion_year} vs {target_year}")
+                            else:
+                                score -= 200  # Wrong year penalty
+                                print(f"Year mismatch: {suggestion_year} vs {target_year}")
+                        elif not target_year and suggestion_year:
+                            # If no target year, prefer older movies (likely the original)
+                            if suggestion_year < 2020:
+                                score += 100
+                        
+                        # Title matching
+                        if important_words:
+                            word_matches = sum(1 for word in important_words if word.lower() in suggestion_lower)
+                            score += word_matches * 50
+                            print(f"Word matches: {word_matches}/{len(important_words)}")
+                        
+                        # Exact title match bonus
+                        clean_suggestion = re.sub(r'\s*\d{4}', '', suggestion_text).strip().lower()
+                        if clean_suggestion == base_title.lower():
+                            score += 200
+                            print(f"Exact title match bonus")
+                        
+                        print(f"Suggestion '{suggestion_text}' scored: {score}")
+                        
+                        if score > best_score:
+                            best_score = score
                             best_suggestion = suggestion
-                            print(f"Found priority match (2025 + keywords): {suggestion.text}")
-                            break
-                    
-                    # Priority 2: Any match with 2025
-                    if not best_suggestion:
-                        for suggestion in suggestions:
-                            suggestion_text = suggestion.text.lower()
-                            if "2025" in suggestion_text:
-                                best_suggestion = suggestion
-                                print(f"Found 2025 match: {suggestion.text}")
-                                break
-                    
-                    # Priority 3: Match with important keywords
-                    if not best_suggestion and important_words:
-                        for suggestion in suggestions:
-                            suggestion_text = suggestion.text.lower()
-                            # Check if suggestion contains multiple important words
-                            word_matches = sum(1 for word in important_words if word.lower() in suggestion_text)
-                            if word_matches >= min(2, len(important_words)):
-                                best_suggestion = suggestion
-                                print(f"Found keyword match: {suggestion.text}")
-                                break
-                    
-                    # Priority 4: First suggestion as fallback
-                    if not best_suggestion and suggestions:
-                        best_suggestion = suggestions[0]
-                        print(f"Using first suggestion as fallback: {best_suggestion.text}")
                     
                     if best_suggestion:
-                        # Check if this is just a "no results" message
-                        suggestion_text = best_suggestion.text.lower()
-                        if any(phrase in suggestion_text for phrase in ['no results', 'searched movies', 'view results']):
-                            print(f"Skipping 'no results' suggestion: {best_suggestion.text}")
-                            continue
+                        print(f"Selected best suggestion: '{best_suggestion.text}' (score: {best_score})")
                         
                         best_suggestion.click()
                         time.sleep(4)  # Give time for page to load
@@ -333,7 +359,7 @@ def search_movie_vuniper(title, driver, custom_dates=None):
         # If no digital date from Vuniper, check custom dates file
         if vuniper_info and not vuniper_info.get('digital_date') and custom_dates:
             # Try to match against custom dates with flexible matching
-            title_lower = title.lower()
+            title_lower = base_title.lower()
             matched_custom_date = None
             
             # Create title variations for matching
@@ -382,7 +408,7 @@ def search_movie_vuniper(title, driver, custom_dates=None):
         
         # If still no info found, try custom dates as fallback
         if not vuniper_info and custom_dates:
-            title_lower = title.lower()
+            title_lower = base_title.lower()
             matched_custom_date = None
             
             # Try exact match first
@@ -677,11 +703,55 @@ def search_movie_tmdb(title):
         print(f"TMDb search error for '{title}': {str(e)}")
     return None
 
-def determine_downloadable_status(release_info):
-    """Determine downloadable status based on Vuniper release info."""
-    if not release_info:
-        return "TBD"
-    return release_info.get('status', 'TBD')
+def determine_downloadable_status(release_info, theater_date=None, digital_date=None):
+    """Determine downloadable status based on release info with improved logic for older movies."""
+    current_date = datetime.now()
+    
+    # If we have explicit status from Vuniper, use it (unless overridden by old theater date)
+    if release_info and release_info.get('status'):
+        status = release_info.get('status')
+        
+        # Override status for old theater releases
+        if theater_date and theater_date != "TBD":
+            try:
+                theater_obj = datetime.strptime(theater_date, "%Y-%m-%d")
+                # If theater release was more than 4 months ago, assume it's available
+                months_since_theater = (current_date - theater_obj).days / 30.44  # Average days per month
+                if months_since_theater >= 4:
+                    print(f"Theater release was {months_since_theater:.1f} months ago, marking as available")
+                    return "Yes"
+            except ValueError:
+                pass
+        
+        return status
+    
+    # Fallback logic when no Vuniper info
+    if theater_date and theater_date != "TBD":
+        try:
+            theater_obj = datetime.strptime(theater_date, "%Y-%m-%d")
+            months_since_theater = (current_date - theater_obj).days / 30.44
+            
+            # If theater release was more than 4 months ago, assume available
+            if months_since_theater >= 4:
+                return "Yes"
+            # If theater release was 2-4 months ago, probably coming soon
+            elif months_since_theater >= 2:
+                return "Soon"
+            # If very recent theater release, probably not available yet
+            else:
+                return "No"
+        except ValueError:
+            pass
+    
+    # Check digital date if available
+    if digital_date and digital_date != "TBD":
+        try:
+            digital_obj = datetime.strptime(digital_date, "%Y-%m-%d")
+            return "Yes" if digital_obj <= current_date else "Soon"
+        except ValueError:
+            pass
+    
+    return "TBD"
 
 def extract_title(line):
     """Extract clean movie title from input line."""
@@ -789,18 +859,43 @@ def check_movies():
             
             current_movie += 1
             
-            # Update progress
+            # Extract year from the original line if available
+            expected_year = None
+            
+            # Look for year in parentheses in the title
+            year_match = re.search(r'\((\d{4})\)', title)
+            if year_match:
+                expected_year = int(year_match.group(1))
+            else:
+                # Look for year in the full line (e.g., release date info)
+                year_match = re.search(r'(\d{4})', line)
+                if year_match:
+                    potential_year = int(year_match.group(1))
+                    # Only use if it's a reasonable movie year (1900-2030)
+                    if 1900 <= potential_year <= 2030:
+                        expected_year = potential_year
+            
+            # Update progress with year info if available
+            year_info = f" ({expected_year})" if expected_year else ""
             output_text.config(state=tk.NORMAL)
             output_text.delete("1.0", tk.END)
-            output_text.insert(tk.END, f"Processing movie {current_movie}/{total_movies}: {title}\n")
+            output_text.insert(tk.END, f"Processing movie {current_movie}/{total_movies}: {title}{year_info}\n")
             output_text.config(state=tk.DISABLED)
             output_text.update()
             
-            # Search Vuniper for release info
-            vuniper_info = search_movie_vuniper(title, driver)
+            # Search Vuniper for release info with year information
+            vuniper_info = search_movie_vuniper(title, driver, expected_year=expected_year)
             
             # Search TMDb for poster and description
             tmdb_data = search_movie_tmdb(title)
+            
+            # If TMDb found a different year, log it for debugging
+            if tmdb_data and expected_year:
+                tmdb_year = tmdb_data.get('release_date', '')[:4] if tmdb_data.get('release_date') else None
+                if tmdb_year and tmdb_year.isdigit():
+                    tmdb_year = int(tmdb_year)
+                    if tmdb_year != expected_year:
+                        print(f"Year mismatch for '{title}': Expected {expected_year}, TMDb found {tmdb_year}")
             
             # Prepare movie result with separate theater and digital dates
             theater_date = "TBD"
@@ -811,8 +906,10 @@ def check_movies():
             if vuniper_info:
                 theater_date = vuniper_info.get('theater_date') or "TBD"
                 digital_date = vuniper_info.get('digital_date') or "TBD"
-                status = vuniper_info.get('status', 'TBD')
                 vuniper_url = vuniper_info.get('vuniper_url')
+            
+            # Use improved status determination
+            status = determine_downloadable_status(vuniper_info, theater_date, digital_date)
             
             poster_url = ''
             overview = 'No description available.'
@@ -832,7 +929,8 @@ def check_movies():
                 'poster_url': poster_url,
                 'overview': overview,
                 'movie_id': movie_id,
-                'vuniper_url': vuniper_url
+                'vuniper_url': vuniper_url,
+                'expected_year': expected_year
             })
             
             # Add delay between requests to be respectful
