@@ -1663,7 +1663,19 @@ def run_cli():
             title = extract_title(line)
             print(f"[{idx}/{len(lines)}] Verwerk: {title}")
             
-            vuniper_info = search_movie_vuniper(title, driver, custom_dates)
+            # Extract expected year from title or full line
+            expected_year = None
+            year_match = re.search(r'\((\d{4})\)', title)
+            if year_match:
+                expected_year = int(year_match.group(1))
+            else:
+                year_match = re.search(r'(\d{4})', line)
+                if year_match:
+                    potential_year = int(year_match.group(1))
+                    if 1900 <= potential_year <= 2035:
+                        expected_year = potential_year
+
+            vuniper_info = search_movie_vuniper(title, driver, custom_dates, expected_year=expected_year)
             tmdb_data = search_movie_tmdb(title)
 
             result = {
