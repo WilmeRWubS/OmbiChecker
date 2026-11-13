@@ -16,6 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import urllib.parse
+import socket
 
 # Your TMDb Bearer Token (still used for poster images and descriptions)
 TMDB_BEARER_TOKEN = "enterhere"
@@ -43,6 +44,14 @@ def setup_selenium_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+    chrome_options.add_argument("--lang=en-US")
+
+    # Vuniapi answers HTTP 429 to IPv6 clients, so make Chrome reach it over IPv4
+    try:
+        api_ipv4 = socket.getaddrinfo("api.vuniper.com", 443, socket.AF_INET)[0][4][0]
+        chrome_options.add_argument(f"--host-resolver-rules=MAP api.vuniper.com {api_ipv4}")
+    except Exception as e:
+        print(f"Could not resolve api.vuniper.com over IPv4: {e}")
     
     try:
         driver = webdriver.Chrome(options=chrome_options)
@@ -255,13 +264,28 @@ def search_movie_vuniper(title, driver, custom_dates=None, expected_year=None):
                 print(f"Trying search term: '{search_term}'")
                 
                 # Find and use search input
-                search_input = driver.find_element(By.ID, "search-input")
+                search_input = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.ID, "navbar-search"))
+                )
                 search_input.clear()
                 search_input.send_keys(search_term)
-                time.sleep(3)  # Give time for suggestions to load
+                
+                # Wait for suggestions (or a search error) to load
+                try:
+                    WebDriverWait(driver, 8).until(lambda d: d.find_elements(
+                        By.CSS_SELECTOR,
+                        "#navbar-search-suggestions [role='option'], #navbar-search-suggestions .search-error"
+                    ))
+                except TimeoutException:
+                    pass
+                
+                search_errors = driver.find_elements(By.CSS_SELECTOR, "#navbar-search-suggestions .search-error")
+                if search_errors:
+                    print(f"Vuniper search error: {search_errors[0].text.strip()} - skipping Vuniper for '{title}'")
+                    break
                 
                 # Try to find suggestions
-                suggestions = driver.find_elements(By.CSS_SELECTOR, ".search-suggestion")
+                suggestions = driver.find_elements(By.CSS_SELECTOR, "#navbar-search-suggestions [role='option']")
                 
                 if suggestions:
                     # Look for the best match with year consideration
@@ -269,12 +293,16 @@ def search_movie_vuniper(title, driver, custom_dates=None, expected_year=None):
                     best_score = -1
                     
                     for suggestion in suggestions:
-                        suggestion_text = suggestion.text.strip()
+                        title_spans = suggestion.find_elements(By.CSS_SELECTOR, ".suggestion-title")
+                        year_spans = suggestion.find_elements(By.CSS_SELECTOR, ".suggestion-year")
+                        suggestion_title = title_spans[0].text.strip() if title_spans else suggestion.text.strip()
+                        suggestion_year_text = year_spans[0].text.strip() if year_spans else ""
+                        suggestion_text = f"{suggestion_title} {suggestion_year_text}".strip()
                         print(f"Evaluating suggestion: '{suggestion_text}'")
                         
                         # Extract year from suggestion text
                         suggestion_year = None
-                        year_match = re.search(r'(\d{4})', suggestion_text)
+                        year_match = re.search(r'(\d{4})', suggestion_year_text if year_spans else suggestion_text)
                         if year_match:
                             suggestion_year = int(year_match.group(1))
                         
@@ -310,7 +338,7 @@ def search_movie_vuniper(title, driver, custom_dates=None, expected_year=None):
                             print(f"Word matches: {word_matches}/{len(important_words)}")
                         
                         # Exact title match bonus
-                        clean_suggestion = re.sub(r'\s*\d{4}', '', suggestion_text).strip().lower()
+                        clean_suggestion = suggestion_title.lower() if year_spans else re.sub(r'\s*\d{4}', '', suggestion_text).strip().lower()
                         if clean_suggestion == base_title.lower():
                             score += 200
                             print(f"Exact title match bonus")
@@ -557,93 +585,61 @@ def load_custom_digital_dates():
     
     return custom_dates
 
+def compute_release_status(release_info):
+    """Set release_info['status'] based on its theater/digital dates."""
+    current_date = datetime.now()
+    
+    if release_info.get('digital_date'):
+        try:
+            digital_obj = datetime.strptime(release_info['digital_date'], "%Y-%m-%d")
+            release_info['status'] = 'Yes' if digital_obj <= current_date else 'Soon'
+        except:
+            release_info['status'] = 'Soon'
+    elif release_info.get('theater_date'):
+        release_info['status'] = 'No'  # Theater only
+    else:
+        release_info['status'] = 'TBD'
+    
+    return release_info
+
 def extract_vuniper_release_info(driver):
-    """Extract release information from Vuniper movie page with improved detection."""
+    """Extract release information from Vuniper movie page."""
     try:
         release_info = {'theater_date': None, 'digital_date': None, 'status': 'TBD'}
         
-        # Wait a bit for page to fully load
-        time.sleep(2)
+        # Rows look like "Theaters: Jul 10, 2025 · Check" and "Streaming: Aug 15, 2025 · Check"
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".release-date-row"))
+            )
+        except TimeoutException:
+            print("No release date rows found on Vuniper page")
         
-        # Try multiple selectors for theater release date
-        theater_selectors = [
-            "//span[contains(text(), 'Theaters')]/preceding-sibling::span[@class='semibold']",
-            "//span[contains(text(), 'Theater')]/preceding-sibling::span[@class='semibold']",
-            "//span[contains(text(), 'Cinema')]/preceding-sibling::span[@class='semibold']",
-            "//img[@alt='Icon of cinema film']/../..//span[@class='semibold']",
-            "//div[contains(@class, 'media-viewer-line')]//span[@class='semibold'][contains(text(), '2025')]",
-        ]
-        
-        for selector in theater_selectors:
-            try:
-                theater_element = driver.find_element(By.XPATH, selector)
-                theater_date_text = theater_element.text.strip()
-                theater_date = standardize_date(theater_date_text)
-                if theater_date:
-                    release_info['theater_date'] = theater_date
-                    print(f"Found theater date: {theater_date_text} -> {theater_date}")
-                    break
-            except:
+        for row in driver.find_elements(By.CSS_SELECTOR, ".release-date-row"):
+            row_text = row.text.strip()
+            if ':' not in row_text:
                 continue
-        
-        # Try multiple selectors for streaming/digital release date
-        streaming_selectors = [
-            "//span[contains(text(), 'Streaming')]/preceding-sibling::span[@class='semibold']",
-            "//span[contains(text(), 'Digital')]/preceding-sibling::span[@class='semibold']",
-            "//span[contains(text(), 'VOD')]/preceding-sibling::span[@class='semibold']",
-            "//span[text()='Digital release date']/preceding-sibling::span[@class='semibold']",
-            "//img[@alt='Streaming icon']/../..//span[@class='semibold']",
-        ]
-        
-        for selector in streaming_selectors:
-            try:
-                streaming_element = driver.find_element(By.XPATH, selector)
-                streaming_date_text = streaming_element.text.strip()
-                streaming_date = standardize_date(streaming_date_text)
-                if streaming_date:
-                    release_info['digital_date'] = streaming_date
-                    print(f"Found digital date: {streaming_date_text} -> {streaming_date}")
-                    break
-            except:
+            label, value = row_text.split(':', 1)
+            label = label.strip().lower()
+            date_text = value.split('\u00b7')[0].strip()
+            
+            # Year-only values ("2026") are too vague to base a status on
+            if re.fullmatch(r'\d{4}', date_text):
+                print(f"Ignoring year-only {label} date: {date_text}")
                 continue
+            
+            standardized = standardize_date(date_text)
+            if not standardized:
+                continue
+            
+            if label.startswith('theater') and not release_info['theater_date']:
+                release_info['theater_date'] = standardized
+                print(f"Found theater date: {date_text} -> {standardized}")
+            elif label.startswith(('streaming', 'digital')) and not release_info['digital_date']:
+                release_info['digital_date'] = standardized
+                print(f"Found digital date: {date_text} -> {standardized}")
         
-        # If no specific streaming date found, look for any additional dates on the page
-        if not release_info['digital_date']:
-            try:
-                # Look for all semibold spans that might contain dates
-                all_date_elements = driver.find_elements(By.XPATH, "//span[@class='semibold']")
-                for element in all_date_elements:
-                    date_text = element.text.strip()
-                    standardized = standardize_date(date_text)
-                    if standardized and standardized != release_info['theater_date']:
-                        # This might be a digital release date
-                        release_info['digital_date'] = standardized
-                        print(f"Found potential digital date: {date_text} -> {standardized}")
-                        break
-            except:
-                pass
-        
-        # Determine status based on available dates
-        current_date = datetime.now()
-        
-        if release_info['digital_date']:
-            try:
-                digital_obj = datetime.strptime(release_info['digital_date'], "%Y-%m-%d")
-                release_info['status'] = 'Yes' if digital_obj <= current_date else 'Soon'
-            except:
-                release_info['status'] = 'Soon'
-        elif release_info['theater_date']:
-            try:
-                theater_obj = datetime.strptime(release_info['theater_date'], "%Y-%m-%d")
-                # If theater date is in the past but no digital date, it might be available
-                if theater_obj <= current_date:
-                    release_info['status'] = 'No'  # Theater only, but released
-                else:
-                    release_info['status'] = 'No'  # Theater only, not yet released
-            except:
-                release_info['status'] = 'No'
-        else:
-            release_info['status'] = 'TBD'
+        compute_release_status(release_info)
         
         print(f"Final release info: {release_info}")
         return release_info
@@ -702,6 +698,62 @@ def search_movie_tmdb(title):
     except Exception as e:
         print(f"TMDb search error for '{title}': {str(e)}")
     return None
+
+TMDB_RELEASE_COUNTRY = "US"
+
+def get_tmdb_release_dates(title, expected_year=None, country=TMDB_RELEASE_COUNTRY):
+    """Get theatrical and digital release dates for a movie from TMDb."""
+    clean_title = re.sub(r'\s*\(\d{4}\)', '', title).strip()
+    try:
+        url = "https://api.themoviedb.org/3/search/movie"
+        params = {"query": clean_title}
+        results = []
+        if expected_year:
+            results = requests.get(url, headers=HEADERS, params={**params, "year": expected_year}, timeout=15).json().get("results") or []
+        if not results:
+            results = requests.get(url, headers=HEADERS, params=params, timeout=15).json().get("results") or []
+        if not results:
+            print(f"TMDb: no match for '{clean_title}'")
+            return None
+        
+        movie = results[0]
+        response = requests.get(f"https://api.themoviedb.org/3/movie/{movie['id']}/release_dates", headers=HEADERS, timeout=15)
+        country_dates = [
+            d for c in response.json().get("results", []) if c.get("iso_3166_1") == country
+            for d in c.get("release_dates", [])
+        ]
+        
+        def earliest(types):
+            dates = sorted(d["release_date"][:10] for d in country_dates if d.get("type") in types and d.get("release_date"))
+            return dates[0] if dates else None
+        
+        # TMDb release types: 2 = Theatrical (limited), 3 = Theatrical, 4 = Digital
+        info = {
+            'theater_date': earliest({3}) or earliest({2}),
+            'digital_date': earliest({4}),
+        }
+        print(f"TMDb ({country}) release dates for '{movie.get('title')}' (id {movie['id']}): {info}")
+        return info
+    except Exception as e:
+        print(f"TMDb release dates error for '{clean_title}': {str(e)}")
+        return None
+
+def apply_tmdb_fallback(vuniper_info, title, expected_year=None):
+    """Fill in theater/digital dates that Vuniper (and custom dates) could not provide using TMDb."""
+    if vuniper_info and vuniper_info.get('theater_date') and vuniper_info.get('digital_date'):
+        return vuniper_info
+    
+    tmdb_info = get_tmdb_release_dates(title, expected_year)
+    if not tmdb_info or not (tmdb_info.get('theater_date') or tmdb_info.get('digital_date')):
+        return vuniper_info
+    
+    merged = dict(vuniper_info) if vuniper_info else {'theater_date': None, 'digital_date': None}
+    for key in ('theater_date', 'digital_date'):
+        if not merged.get(key) and tmdb_info.get(key):
+            merged[key] = tmdb_info[key]
+            print(f"Using TMDb {key} for '{title}': {tmdb_info[key]}")
+    
+    return compute_release_status(merged)
 
 def determine_downloadable_status(release_info, theater_date=None, digital_date=None):
     """Determine downloadable status based on release info with improved logic for older movies."""
@@ -885,6 +937,7 @@ def check_movies():
             
             # Search Vuniper for release info with year information
             vuniper_info = search_movie_vuniper(title, driver, expected_year=expected_year)
+            vuniper_info = apply_tmdb_fallback(vuniper_info, title, expected_year)
             
             # Search TMDb for poster and description
             tmdb_data = search_movie_tmdb(title)
@@ -1618,12 +1671,13 @@ def run_cli():
                         expected_year = potential_year
 
             vuniper_info = search_movie_vuniper(title, driver, custom_dates, expected_year=expected_year)
+            vuniper_info = apply_tmdb_fallback(vuniper_info, title, expected_year)
             tmdb_data = search_movie_tmdb(title)
 
             result = {
                 "title": title,
-                "theater_date": vuniper_info.get("theater_date") if vuniper_info else "TBD",
-                "digital_date": vuniper_info.get("digital_date") if vuniper_info else "TBD",
+                "theater_date": (vuniper_info.get("theater_date") if vuniper_info else None) or "TBD",
+                "digital_date": (vuniper_info.get("digital_date") if vuniper_info else None) or "TBD",
                 "status": determine_downloadable_status(
                     vuniper_info,
                     vuniper_info.get("theater_date") if vuniper_info else None,
